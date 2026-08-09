@@ -5,6 +5,26 @@
 
 ---
 
+> ## SUPERSEDED IN PART — read [ADR-002](../_specs/ADR-002-sdk-owns-header-validation.md) first
+>
+> `mcp` 2.0 ships `mcp/shared/inbound.py`, a pure exported module that already implements
+> the whole mirrored-metadata ladder. **§3 below is superseded — do not implement it.**
+> Call the SDK instead:
+>
+> ```python
+> from mcp.shared.inbound import (
+>     ERROR_CODE_HTTP_STATUS, InboundLadderRejection, classify_inbound_request,
+>     find_duplicated_routing_header, validate_mcp_param_headers,
+> )
+> ```
+>
+> §2 (parser choice, byte prescan) and §4–§7 stand unchanged — the SDK takes an
+> already-decoded mapping, so duplicate body keys, depth, and structural limits remain ours.
+> Unit 02 becomes: prescan → parse+dupe-detect → structural limits → **SDK ladder** →
+> envelope shape → method allowlist → MRTR refusal → CanonicalRequest.
+> The corpus does **not** shrink: delegated behavior still needs every test, and the corpus
+> becomes the SDK-upgrade gate.
+
 ## 0. D-1 — RESOLVED. Client edge is Streamable HTTP
 
 See [ADR-001](../_specs/ADR-001-transport-and-mirrored-metadata.md). The spec is explicit that stdio has **"no header layer"**, so the consistency check only exists on HTTP. The client-facing edge is Streamable HTTP on loopback; the upstream leg stays stdio.
@@ -84,7 +104,10 @@ One iterative (not recursive) walk over the parsed tree for array length, string
 
 ---
 
-## 3. The consistency check (PROTO-001 … 007)
+## 3. The consistency check — SUPERSEDED by ADR-002, retained for the corpus
+
+*The rules below are what the SDK enforces. Do not reimplement them; use them as the
+specification for the test corpus, which must pin this behavior across SDK versions.*
 
 The complete mirrored set, confirmed against the spec ([ADR-001](../_specs/ADR-001-transport-and-mirrored-metadata.md) §3):
 

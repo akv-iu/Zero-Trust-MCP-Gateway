@@ -20,17 +20,20 @@ The governing rule for the rest of this project:
 
 ---
 
-## 2. The differentiator
+## 2. The claim
 
-Every gateway in this category — Docker MCP Gateway, IBM ContextForge, Microsoft MCP Gateway, Lunar MCPX, MCPJungle, Solo.io agentgateway, Kong, Pomerium, Cloudflare AI Gateway — was designed against session-based Streamable HTTP. The MCP specification dated **2026-07-28** made the core protocol stateless and introduced request-level metadata headers (`Mcp-Method`, `Mcp-Name`) that mirror JSON-RPC body fields, with a specification rule that a disagreeing header and body **must be rejected**.
-
-That mirroring is a new, unguarded attack surface: a policy engine that authorizes on the header while the upstream server executes the body — or vice versa — is exploitable by construction, and it did not exist before 2026-07-28.
+> **Rewritten by [ADR-002](_specs/ADR-002-sdk-owns-header-validation.md).** An earlier draft staked this section on header/body consistency enforcement being a narrow, time-limited edge. It was not: `mcp` 2.0 ships `mcp/shared/inbound.py`, a pure exported module implementing the whole validation ladder — mirrored fields, duplicate headers, base64 sentinel, `x-mcp-header` constraints, `Mcp-Param-*` comparison, and the HTTP status mapping. It was commodity on the day it was written. v1 **uses** that module rather than reimplementing it.
 
 **v1's claim, in one sentence:**
 
-> A default-deny MCP enforcement point built natively against the 2026-07-28 stateless specification, which authorizes on a single canonical view of the request and rejects header/body disagreement before any routing or policy decision occurs.
+> A default-deny MCP enforcement point built on the current SDK, which authorizes every request against a single canonical view and **proves non-bypass with a side-effect oracle at the protected system** rather than with its own denial messages.
 
-This is a narrow and **time-limited** edge — incumbents will close it. That is fine: v1 is a portfolio and evidence artifact with a 6–8 week horizon, not a product with a moat. The edge is what makes the artifact worth reading in Q3/Q4 2026, and `_specs/02-svc-protocol-guard.md` is where it lives.
+The novelty is not the parsing — it is the **evidence**. A published attack corpus. An oracle that observes the protected filesystem rather than trusting the gateway's own output. A measured overhead distribution with its co-location caveat stated. An audit trail with a measured completeness ratio. None of that ships in any SDK, and none of it ships in the incumbent gateways either. §9 records why that, not feature parity, is what this project is for.
+
+Two secondary points remain true and usable, stated at their real strength:
+
+- Most deployed gateways — Docker MCP Gateway, IBM ContextForge, Microsoft MCP Gateway, Lunar MCPX, MCPJungle, Solo.io agentgateway, Kong, Pomerium, Cloudflare AI Gateway — target the pre-2026-07-28 session-based transport and perform no mirrored-metadata validation at all. Being current is a **correct dependency choice**, not novel engineering. Say it that way.
+- The spec directs *intermediaries* to reject rather than trust headers when the protocol version predates header/body validation. The SDK supplies the ladder; **refusing to serve a downgraded request is the gateway's policy decision.** That test stays and stays valuable.
 
 > **D-1 — RESOLVED 2026-08-08, see [ADR-001](_specs/ADR-001-transport-and-mirrored-metadata.md).** The spec is explicit that stdio has "no header layer", so the differentiator exists only on Streamable HTTP. **The client-facing edge is Streamable HTTP, loopback-bound; the upstream leg stays stdio.** This is cheaper than the plan assumed: the 2026-07-28 revision removed sessions, the GET stream, resumability, and the `initialize` handshake, leaving one POST endpoint. It also dissolves spike S-1, since an ASGI app hands over raw bytes and headers directly. The mirrored surface turned out to be four families, not two — including `Mcp-Param-{Name}` driven by server-supplied `x-mcp-header` schema annotations, a base64 sentinel encoding, and a spec-named downgrade attack against gateways specifically.
 
