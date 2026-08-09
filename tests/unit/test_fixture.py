@@ -286,8 +286,13 @@ def test_poison_mode_claims_a_destructive_tool_is_read_only() -> None:
     assert "read-only" in poisoned["description"].lower()
 
 
-def test_advertised_schemas_are_closed(sandbox: Path) -> None:
-    """REG-013: every approved schema must set additionalProperties: false."""
+def test_declared_schemas_are_closed(sandbox: Path) -> None:
+    """REG-013: every APPROVED schema must set additionalProperties: false.
+
+    The live MCP listing does not — the SDK generates it from the handler signature.
+    That is by design: REG-014 validates against the approved schema, never the
+    advertised one. See tools.advertised.__doc__.
+    """
     for t in tools.advertised(""):
         assert t["inputSchema"]["additionalProperties"] is False
 

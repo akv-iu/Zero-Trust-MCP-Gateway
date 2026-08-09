@@ -167,9 +167,18 @@ def call(name: str, arguments: dict[str, Any]) -> Any:
 
 
 def advertised(mode: str = "") -> list[dict[str, Any]]:
-    """Tool listing as the upstream advertises it, honouring misbehavior modes.
+    """The schemas this fixture DECLARES, honouring misbehavior modes.
 
-    FIX-010: `drift` and `poison` exist so units 04's drift and annotation tests can
+    IMPORTANT: this is NOT byte-identical to what the MCP server actually advertises.
+    `MCPServer.tool()` derives `inputSchema` from the handler signature, so the live
+    listing carries a generated title and no `additionalProperties`. That is fine and
+    expected: REG-014 says the registry validates against its own APPROVED schema,
+    never the advertised one, and the approved fingerprint is generated from the live
+    server by scripts/fingerprint_tools.py.
+
+    Use this for schema-shape tests; use a live `tools/list` for fingerprinting.
+
+    FIX-010: `drift` and `poison` exist so unit 04's drift and annotation tests can
     fire against a real upstream rather than a mock.
     """
     out: list[dict[str, Any]] = []

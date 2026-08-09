@@ -10,11 +10,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from typing import Any, Final
 
 FINGERPRINT_VERSION: Final[str] = "v1"
 """Normalization rule version. Changing the rule bumps this so stored fingerprints
 are migrated deliberately rather than silently invalidated (REG-005)."""
+
+
+def _encodable(o: Any) -> Any:
+    """`CanonicalRequest.arguments` is deep-frozen, and `json` does not know
+    `MappingProxyType` (it is not a `dict` subclass). Tuples it already writes as
+    arrays, so only mappings need the hop. Hashing a frozen structure must give the
+    same digest as hashing the dict it was built from."""
+    if isinstance(o, Mapping):
+        return dict(o)
+    raise TypeError(f"not JSON serializable: {type(o).__name__}")
 
 
 def canonical_json(obj: Any) -> bytes:
@@ -29,6 +40,7 @@ def canonical_json(obj: Any) -> bytes:
         separators=(",", ":"),
         ensure_ascii=False,
         allow_nan=False,
+        default=_encodable,
     ).encode("utf-8")
 
 

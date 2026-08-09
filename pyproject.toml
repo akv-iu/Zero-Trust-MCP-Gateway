@@ -27,6 +27,9 @@ dev = ["pytest", "pytest-anyio", "hypothesis", "ruff", "pyright"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "slow: spawns processes or kills them; excluded with -m 'not slow'",
+]
 
 [tool.ruff]
 line-length = 90

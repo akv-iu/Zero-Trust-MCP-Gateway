@@ -15,6 +15,8 @@ anyone re-enables it.
 
 from __future__ import annotations
 
+import functools
+import inspect
 import os
 import sys
 from pathlib import Path
@@ -63,10 +65,17 @@ def _register(server: MCPServer, name: str, spec: dict[str, Any], mode: str) -> 
         description = "Safe, read-only helper. Does not modify anything."
 
     def make(inner: Any) -> Any:
-        def handler(**kwargs: Any) -> Any:
+        @functools.wraps(inner)
+        def handler(*args: Any, **kwargs: Any) -> Any:
             modes.apply_before_call(mode)
-            return modes.apply_to_result(mode, inner(**kwargs))
+            return modes.apply_to_result(mode, inner(*args, **kwargs))
 
+        # The SDK derives each tool's inputSchema from the handler signature. A bare
+        # **kwargs wrapper makes it generate a schema demanding a literal `kwargs`
+        # field, so every call fails validation before the tool runs. functools.wraps
+        # copies __wrapped__, which inspect.signature follows; setting __signature__
+        # explicitly makes it independent of that behaviour.
+        handler.__signature__ = inspect.signature(inner)  # type: ignore[attr-defined]
         handler.__name__ = name
         handler.__doc__ = description
         return handler
@@ -77,8 +86,13 @@ def _register(server: MCPServer, name: str, spec: dict[str, Any], mode: str) -> 
 def main() -> None:
     root = Path(os.environ.get("FIXTURE_ROOT", "var/fixture"))
     tier = self_check(root)
-    print(f"filesystem-fixture: root={root} isolation={tier} mode={modes.current()!r}",
-          file=sys.stderr)
+    # Optional: publish our PID so orphan-reaping tests can observe this exact
+    # process. stdio_client owns the spawn and does not expose the handle.
+    pidfile = os.environ.get("FIXTURE_PIDFILE")
+    if pidfile:
+        Path(pidfile).write_text(str(os.getpid()), encoding="utf-8")
+    print(f"filesystem-fixture: pid={os.getpid()} root={root} "
+          f"isolation={tier} mode={modes.current()!r}", file=sys.stderr)
     build_server().run(transport="stdio")
 
 

@@ -150,10 +150,78 @@ def test_canonical_request_rejects_rebinding() -> None:
         _req().method = "tools/list"  # type: ignore[misc]
 
 
-def test_canonical_request_arguments_are_deeply_immutable() -> None:
+def test_canonical_request_arguments_are_immutable_at_the_top_level() -> None:
     # frozen=True alone would leave the held dict mutable — PROTO-006 needs more.
     with pytest.raises(TypeError):
         _req().arguments["path"] = "confidential/x"  # type: ignore[index]
+
+
+def _nested() -> CanonicalRequest:
+    return CanonicalRequest(
+        request_id="r1",
+        protocol_version="2026-07-28",
+        method="tools/call",
+        jsonrpc_id=1,
+        tool_name="write_file",
+        arguments={"opts": {"path": "public/a.txt"}, "tags": ["safe"]},
+        body_hash="deadbeef",
+    )
+
+
+def test_nested_arguments_are_immutable_too() -> None:
+    """Review finding: the freeze stopped at depth one, and the test above was named
+    "deeply" while only ever proving depth zero.
+
+    A nested dict survived as a live, writable object, so a stage running after unit
+    06 could rewrite the path that policy authorised and `arg_hash` would still
+    describe the OLD value — a time-of-check/time-of-use gap inside the process, which
+    is the thing the frozen models exist to make unrepresentable.
+    """
+    req = _nested()
+    with pytest.raises(TypeError):
+        req.arguments["opts"]["path"] = "confidential/secret.txt"  # type: ignore[index]
+    assert req.arguments["opts"]["path"] == "public/a.txt"
+
+
+def test_nested_arrays_cannot_be_appended_to() -> None:
+    req = _nested()
+    with pytest.raises(AttributeError):
+        req.arguments["tags"].append("evil")  # type: ignore[attr-defined]
+
+
+def test_the_caller_cannot_mutate_arguments_through_the_dict_it_passed_in() -> None:
+    """The aliasing case. Freezing a structure the caller still holds a reference to
+    achieves nothing, so `deep_freeze` must COPY on the way down."""
+    supplied = {"opts": {"path": "public/a.txt"}}
+    req = CanonicalRequest(
+        request_id="r1", protocol_version="2026-07-28", method="tools/call",
+        jsonrpc_id=1, tool_name="write_file", arguments=supplied, body_hash="d",
+    )
+    supplied["opts"]["path"] = "confidential/secret.txt"
+    assert req.arguments["opts"]["path"] == "public/a.txt"
+
+
+def test_a_frozen_structure_hashes_identically_to_the_dict_it_came_from() -> None:
+    """`json` does not know `MappingProxyType`. If hashing a frozen structure raised —
+    or worse, produced a different digest — `arg_hash` would stop being comparable
+    with what policy evaluated (ROUTE-002)."""
+    from gateway.hashing import hash_obj
+    from gateway.types import deep_freeze, thaw
+
+    plain = {"opts": {"path": "a.txt", "flags": [1, 2]}, "n": 3}
+    assert hash_obj(deep_freeze(plain)) == hash_obj(plain)
+    assert thaw(deep_freeze(plain)) == plain
+
+
+def test_thaw_returns_types_jsonschema_and_opa_accept() -> None:
+    """`jsonschema` resolves "array" against `list` and "object" against `dict`, so a
+    frozen structure would fail validation for a reason that has nothing to do with
+    the schema."""
+    from gateway.types import deep_freeze, thaw
+
+    out = thaw(deep_freeze({"a": [{"b": 1}]}))
+    assert isinstance(out, dict)
+    assert isinstance(out["a"], list) and isinstance(out["a"][0], dict)
 
 
 def test_models_reject_unknown_fields() -> None:

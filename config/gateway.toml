@@ -13,10 +13,20 @@ max_concurrent_requests = 4
 request_timeout_s = 30.0
 
 [child]                      # 01 - upstream stdio leg
+# The module is fixtures.filesystem_server.server; the package has no __main__.
+# cwd is the repo root so `-m` can resolve it. Verified by
+# tests/unit/test_shipped_config.py, which starts the child from THIS file.
+# For the three WIRE-level misbehaviour modes (malformed / wrong_id / unsolicited)
+# swap args to ["-m", "fixtures.misbehaving_wrapper"] — the SDK will not emit those
+# bytes from inside the server. The seven tool-level modes need no change.
 executable = "python"
-args = ["-m", "fixtures.filesystem_server"]
-cwd = "fixtures"
-env_allowlist = ["PATH", "PYTHONPATH", "FIXTURE_ROOT", "FIXTURE_OPLOG", "FIXTURE_MODE"]
+args = ["-m", "fixtures.filesystem_server.server"]
+cwd = "."
+env_allowlist = [
+  "PATH", "PYTHONPATH", "SYSTEMROOT", "COMSPEC",
+  "FIXTURE_ROOT", "FIXTURE_OPLOG", "FIXTURE_MODE",
+  "FIXTURE_ALLOW_WEAK_ISOLATION", "FIXTURE_ISOLATION_TIER",
+]
 startup_timeout_s = 10.0
 shutdown_grace_s = 5.0
 stderr_capture_lines = 256

@@ -26,6 +26,39 @@ RiskTier = Literal["R0", "R1", "R2", "R4"]  # R3 is not implemented in v1 (CONV-
 _FROZEN = ConfigDict(frozen=True, extra="forbid")
 
 
+def deep_freeze(v: Any) -> Any:
+    """Recursively make decoded JSON immutable.
+
+    `MappingProxyType(dict(v))` freezes only the TOP level: given
+    ``{"opts": {"path": "safe"}}`` the inner dict is still writable, so a later stage
+    could edit an argument after policy evaluated it and `arg_hash` would no longer
+    describe what unit 07 sends upstream. That is precisely the time-of-check /
+    time-of-use gap the frozen models exist to close, so the freeze has to go all the
+    way down.
+
+    Lists become tuples: a JSON array is data here, never a buffer to append to.
+    """
+    if isinstance(v, Mapping):
+        return MappingProxyType({k: deep_freeze(x) for k, x in v.items()})
+    if isinstance(v, (list, tuple)):
+        return tuple(deep_freeze(x) for x in v)
+    return v
+
+
+def thaw(v: Any) -> Any:
+    """Inverse of `deep_freeze`, for the consumers that require plain JSON types.
+
+    `jsonschema` resolves ``"type": "array"`` against `list` and ``"object"`` against
+    `dict`, so a frozen structure fails validation for the wrong reason. The OPA
+    request body needs the same. Call this AT the boundary and never store the result.
+    """
+    if isinstance(v, Mapping):
+        return {k: thaw(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [thaw(x) for x in v]
+    return v
+
+
 class RawEnvelope(BaseModel):
     """01 -> 02 only. MUST NOT be reachable from any stage after 02 (PROTO-006)."""
 
@@ -61,8 +94,9 @@ class CanonicalRequest(BaseModel):
     @field_validator("arguments", mode="after")
     @classmethod
     def _freeze(cls, v: Mapping[str, Any]) -> Mapping[str, Any]:
-        # frozen=True stops rebinding, not mutation of a held dict.
-        return MappingProxyType(dict(v))
+        # frozen=True stops rebinding, not mutation of a held dict — and nested
+        # values are the part that gets missed. See `deep_freeze`.
+        return deep_freeze(v)
 
 
 class AuthzContext(BaseModel):

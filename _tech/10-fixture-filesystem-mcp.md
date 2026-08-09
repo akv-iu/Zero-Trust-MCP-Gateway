@@ -127,7 +127,7 @@ Env-var driven, all default off, each mapping to a specific gateway test:
 | `oversized` | Return a 100 MiB string | `ROUTE_RESPONSE_TOO_LARGE`, `RESP_TOO_LARGE` |
 | `malformed` | Emit invalid JSON on the wire | `RESP_ENVELOPE_INVALID` |
 | `wrong_id` | Respond with a mutated JSON-RPC id | `RESP_CORRELATION_MISMATCH` |
-| `unsolicited` | Emit a spurious notification | `RESP_UNSOLICITED` |
+| `unsolicited` | Emit a spurious server→client **request** ahead of the real response | `RESP_UNSOLICITED` |
 | `hang` | `time.sleep(3600)` | `ROUTE_TIMEOUT`, cancellation |
 | `crash` | `os._exit(1)` mid-call | `ROUTE_UPSTREAM_UNAVAILABLE` |
 | `drift` | Alter a tool description | `REG_SCHEMA_DRIFT` |
@@ -135,9 +135,20 @@ Env-var driven, all default off, each mapping to a specific gateway test:
 | `pathological` | Deeply nested / huge array result | `RESP_LIMIT_EXCEEDED` |
 | `inject` | Return instruction-shaped text | `RESP-005`, `AGENT-010` |
 
-`malformed`, `wrong_id`, and `unsolicited` need to write raw bytes to `stdout`, which `FastMCP` does not expose. Implement them by wrapping the process: a thin `fixtures/misbehaving_wrapper.py` that spawns the real fixture and mutates the byte stream between it and the gateway. That keeps the honest fixture honest and confines protocol-level nastiness to one file.
+`malformed`, `wrong_id`, and `unsolicited` need to write raw bytes to `stdout`, which `MCPServer` does not expose — the SDK owns framing and correlation and will not emit an unparseable line, a mismatched id, or a message nobody asked for. **Built**, as `fixtures/misbehaving_wrapper.py`: a process that spawns the real fixture and mutates the byte stream between it and the gateway. The honest fixture stays honest and protocol-level nastiness is confined to one file.
 
-Build all ten in week 1 alongside the fixture (`FIX-010` note). Retrofitting misbehavior into a server that assumes it behaves is more work than it looks.
+Point `[child].args` at it instead of the server:
+
+```toml
+args = ["-m", "fixtures.misbehaving_wrapper"]   # wire modes only
+```
+
+The transform itself is `modes.apply_to_wire`, a pure function, so the exact bytes are pinned by unit tests that spawn nothing. Two rules it must keep:
+
+- **Only responses to `tools/call` are corrupted.** The wrapper tracks the ids going the other way. Corrupting the handshake or `tools/list` fails every scenario before it reaches the code under test, and that failure looks exactly like the gateway working.
+- **Refuse tool-level modes.** Running the wrapper for `crash` would pass bytes through unchanged and move the crash one process further away, silently disabling the mode.
+
+Build all ten in week 1 alongside the fixture (`FIX-010` note). Retrofitting misbehavior into a server that assumes it behaves is more work than it looks — and a mode that is declared but inert is worse than one that is absent, because the corpus scores against it either way.
 
 ---
 

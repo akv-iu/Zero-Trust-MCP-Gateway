@@ -125,21 +125,23 @@ Every terminating edge writes exactly one audit event. A request that dies at `0
 
 Ordered so that each step is runnable and testable the day it lands. Nothing is built before the thing that consumes it can exercise it.
 
-| # | Unit | Depends on | Runnable proof when done |
-|---|---|---|---|
-| 1 | `10-fixture-filesystem-mcp` | — | A real MCP server with synthetic fixtures; `direct` mode demonstrates unsafe side effects |
-| 2 | `11-svc-eval-harness` (skeleton) | 10 | Scenario schema loads; `direct` mode runs; side-effect oracle observes real damage |
-| 3 | `01-svc-stdio-bridge` | 10 | Client → gateway → fixture passthrough works, zero policy |
-| 4 | `09-svc-audit-log` | — | Every passthrough writes one JSONL event |
-| 5 | `02-svc-protocol-guard` | 01, 09 | Malformed JSON-RPC and header/body mismatch rejected + audited |
-| 6 | `03-svc-identity-resolver` | 09 | Principal appears in the audit event, labelled `local_config` |
-| 7 | `04-svc-registry` | 02, 09 | Unregistered server/tool denied; schema fingerprint recorded |
-| 8 | `05-svc-canonicalizer-fs` | 04 | Traversal/encoding/symlink cases resolve to a canonical path or reject |
-| 9 | `06-svc-policy-broker` | 03, 04, 05, 09 | OPA allow/deny with reason code; OPA killed → all protected calls denied |
-| 10 | `07-svc-upstream-router` | 06, 10 | Only allowed calls reach the fixture; obligations enforced |
-| 11 | `08-svc-response-guard` | 07 | Oversized/mismatched upstream responses become controlled errors |
-| 12 | `11-svc-eval-harness` (full) | all | 100+ scenarios, `direct` vs `protected`, overhead numbers, report |
-| 13 | `12-svc-agent-harness` | v1 exit gate | Groq proposes calls; gateway result is identical to the deterministic client's |
+| # | Unit | Depends on | Runnable proof when done | State |
+|---|---|---|---|---|
+| 1 | `10-fixture-filesystem-mcp` | — | A real MCP server with synthetic fixtures; `direct` mode demonstrates unsafe side effects | **done** |
+| 2 | `11-svc-eval-harness` (skeleton) | 10 | Scenario schema loads; `direct` mode runs; side-effect oracle observes real damage | **done** |
+| 3 | `01-svc-stdio-bridge` | 10 | Client → gateway → fixture passthrough works, zero policy | **done** |
+| 4 | `09-svc-audit-log` | — | Every passthrough writes one JSONL event | **done** |
+| 5 | `02-svc-protocol-guard` | 01, 09 | Malformed JSON-RPC and header/body mismatch rejected + audited | next |
+| 6 | `03-svc-identity-resolver` | 09 | Principal appears in the audit event, labelled `local_config` | |
+| 7 | `04-svc-registry` | 02, 09 | Unregistered server/tool denied; schema fingerprint recorded | |
+| 8 | `05-svc-canonicalizer-fs` | 04 | Traversal/encoding/symlink cases resolve to a canonical path or reject | |
+| 9 | `06-svc-policy-broker` | 03, 04, 05, 09 | OPA allow/deny with reason code; OPA killed → all protected calls denied | |
+| 10 | `07-svc-upstream-router` | 06, 10 | Only allowed calls reach the fixture; obligations enforced | |
+| 11 | `08-svc-response-guard` | 07 | Oversized/mismatched upstream responses become controlled errors | |
+| 12 | `11-svc-eval-harness` (full) | all | 100+ scenarios, `direct` vs `protected`, overhead numbers, report | |
+| 13 | `12-svc-agent-harness` | v1 exit gate | Groq proposes calls; gateway result is identical to the deterministic client's | |
+
+A unit is **done** when its failure paths are proved, not when its happy path runs. Units 01, 09 and 10 each went through a review round after first being called complete; what those rounds found were, without exception, safety and failure-path defects sitting behind a working happy path. Two carried-over items are tracked where they will be fixed rather than here: cancellation is wired in unit 07 (see `gateway/router.py`), and orphan reaping currently depends on the child honouring stdin EOF rather than on OS-level process groups (see `tests/unit/test_orphan_reaping.py`).
 
 Order rationale: the fixture and the oracle come **first** so that "the gateway blocked it" is verified against observed filesystem state from day one, never against a denial message. The audit log comes before any enforcement so that no enforcement stage is ever written without its evidence path.
 

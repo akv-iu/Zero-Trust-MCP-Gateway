@@ -5,13 +5,16 @@ otherwise be written: units 04, 07 and 08 are untestable against a well-behaved
 upstream. Built now, in week 1, because retrofitting misbehavior into a server that
 assumes it behaves is more work than it looks.
 
-Tool-level modes live here. The three wire-level ones (malformed, wrong_id,
-unsolicited) need to corrupt bytes on the pipe and live in `misbehaving_wrapper.py`,
-so the honest server stays honest.
+Tool-level modes act inside the server. The three wire-level ones (malformed,
+wrong_id, unsolicited) cannot: the SDK owns JSON-RPC framing and will not emit an
+invalid or unsolicited message. `apply_to_wire` below is the transform, and
+`fixtures/misbehaving_wrapper.py` is the process that applies it between the gateway
+and the honest fixture — so the honest server stays honest.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from typing import Any, Final
@@ -55,3 +58,45 @@ def apply_to_result(mode: str, result: Any) -> Any:
             f"{result}"
         )
     return result
+
+
+# -- wire level ------------------------------------------------------------
+#
+# These run in `misbehaving_wrapper.py`, on the bytes flowing from the honest
+# fixture to the gateway. Kept here so all ten modes are defined in one file and so
+# the transform is testable without spawning two processes.
+
+UNSOLICITED_LINE: Final[bytes] = (
+    b'{"jsonrpc":"2.0","id":"unsolicited-0","method":"roots/list","params":{}}'
+)
+"""A server->client REQUEST the gateway never asked for. Unit 08 must refuse it
+rather than answering it or correlating it with the in-flight call (S-2)."""
+
+
+def apply_to_wire(mode: str, line: bytes, targets: set[Any]) -> list[bytes]:
+    """Rewrite one response line. Returns the lines to emit in its place.
+
+    `targets` holds the JSON-RPC ids of `tools/call` requests seen going the other
+    way. Only those are corrupted: the handshake and `tools/list` must succeed, or
+    the gateway never reaches the code under test.
+    """
+    if mode not in WIRE_LEVEL:
+        return [line]
+    try:
+        msg = json.loads(line)
+    except (ValueError, UnicodeDecodeError):
+        return [line]
+    if not isinstance(msg, dict) or "id" not in msg or msg["id"] not in targets:
+        return [line]
+
+    if mode == "malformed":
+        # Truncated mid-object: valid framing, unparseable content. Byte-level
+        # damage, which is why this cannot be done from inside the SDK.
+        return [b'{"jsonrpc":"2.0","id":' + json.dumps(msg["id"]).encode() + b',"resu']
+    if mode == "wrong_id":
+        rid = msg["id"]
+        msg["id"] = rid + 90_000 if isinstance(rid, int) else f"{rid}-tampered"
+        return [json.dumps(msg).encode()]
+    if mode == "unsolicited":
+        return [UNSOLICITED_LINE, line]
+    return [line]
