@@ -23,8 +23,14 @@ async def main() -> None:
         args=("-m", "fixtures.filesystem_server.server"),
         cwd=str(Path(__file__).resolve().parents[2]),
         env_allowlist=(
-            "PATH", "PYTHONPATH", "SYSTEMROOT", "FIXTURE_ROOT", "FIXTURE_OPLOG",
-            "FIXTURE_MODE", "FIXTURE_ALLOW_WEAK_ISOLATION", "FIXTURE_PIDFILE",
+            "PATH",
+            "PYTHONPATH",
+            "SYSTEMROOT",
+            "FIXTURE_ROOT",
+            "FIXTURE_OPLOG",
+            "FIXTURE_MODE",
+            "FIXTURE_ALLOW_WEAK_ISOLATION",
+            "FIXTURE_PIDFILE",
         ),
     )
     async with upstream(cfg) as up:

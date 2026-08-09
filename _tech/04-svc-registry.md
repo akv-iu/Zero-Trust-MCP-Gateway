@@ -12,10 +12,10 @@ Load once at startup into a frozen structure; per-request work is dict lookups p
 ```python
 class Registry:
     servers: Mapping[str, ServerEntry]
-    _drift: dict[str, str]       # tool_name -> reason; populated at handshake, then read-only
+    _drift: dict[str, str]  # tool_name -> reason; populated at handshake, then read-only
 
     def resolve(self, req, ctx) -> ResolvedTarget: ...
-    def visible_tools(self, ctx) -> list[Tool]: ...   # REG-010
+    def visible_tools(self, ctx) -> list[Tool]: ...  # REG-010
 ```
 
 `_drift` is the only mutable state, written exactly once during the upstream handshake and never after. Guard that with a `_sealed` flag rather than trusting call order.
@@ -70,7 +70,7 @@ def fingerprint(tool: dict) -> str:
         "outputSchema": tool.get("outputSchema") or {},
         "annotations": tool.get("annotations") or {},
     }
-    return "v1:" + hash_obj(normalized)     # canonical_json: sorted keys, tight separators
+    return "v1:" + hash_obj(normalized)  # canonical_json: sorted keys, tight separators
 ```
 
 Rules that make this stable and non-surprising:
@@ -96,11 +96,14 @@ async def verify_schemas(self, session: ClientSession) -> None:
     for name, approved in self.tools.items():
         adv = advertised.get(name)
         if adv is None:
-            self._drift[name] = ReasonCode.REG_TOOL_UNKNOWN; continue
+            self._drift[name] = ReasonCode.REG_TOOL_UNKNOWN
+            continue
         if fingerprint(adv.model_dump()) != approved.schema_fingerprint:
             self._drift[name] = ReasonCode.REG_SCHEMA_DRIFT
     for name in advertised.keys() - self.tools.keys():
-        audit_event("tool_advertised_not_approved", tool=name)   # not an error; just denied
+        audit_event(
+            "tool_advertised_not_approved", tool=name
+        )  # not an error; just denied
     self._sealed = True
 ```
 
@@ -116,8 +119,11 @@ Drift events are written to the audit stream with `event_type="drift"` rather th
 
 ```python
 from jsonschema import Draft202012Validator
-self._validators = {name: Draft202012Validator(json.loads(t.input_schema))
-                    for name, t in self.tools.items()}
+
+self._validators = {
+    name: Draft202012Validator(json.loads(t.input_schema))
+    for name, t in self.tools.items()
+}
 ```
 
 Compile at load so a malformed schema fails startup rather than the first request. Use `iter_errors` and deny on the first — do not aggregate; error detail is diagnostic-only anyway (`CONV-009`).
@@ -145,10 +151,12 @@ The divergence bug is structural, so eliminate it structurally: both paths call 
 
 ```python
 def _callable(self, ctx: AuthzContext, tool: ToolEntry) -> bool:
-    return (tool.enabled
-            and tool.name not in self._drift
-            and self.server.state == "enabled"
-            and policy.could_ever_allow(ctx, tool))     # cached, see below
+    return (
+        tool.enabled
+        and tool.name not in self._drift
+        and self.server.state == "enabled"
+        and policy.could_ever_allow(ctx, tool)
+    )  # cached, see below
 ```
 
 `could_ever_allow` is a **separate Rego entrypoint** (`data.gateway.discoverable`) that takes principal + roles + tool but no resource — "is there any resource for which this principal could call this tool?". Evaluated once per (principal, tool) at startup and cached, because it depends only on config-fixed inputs.

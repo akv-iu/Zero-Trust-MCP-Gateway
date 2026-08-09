@@ -11,7 +11,7 @@ The smallest module in the gateway — a pure function over config. Its value is
 
 ```python
 def resolve(req: CanonicalRequest, cfg: IdentityConfig) -> AuthzContext:
-    return cfg.context          # prebuilt at startup, frozen, one per process
+    return cfg.context  # prebuilt at startup, frozen, one per process
 ```
 
 Config validation happens at startup; per-request work is returning a frozen object. Do not add caching, lookup, or a resolver interface — there is exactly one identity per gateway process in v1.
@@ -24,7 +24,7 @@ The `AuthzContext` construction is trivial. The *type* is the deliverable:
 
 ```python
 auth_method: Literal["local_config"]
-assurance:   Literal["unverified_local"]
+assurance: Literal["unverified_local"]
 ```
 
 `IDENT-002` says the gateway must never claim verified identity. A convention would be forgotten in six months; a `Literal` with one member means overstating identity requires editing `types.py`, which shows up in review, and pyright fails the build in the meantime. **That is the entire design.**
@@ -87,10 +87,24 @@ There is no code to write — `resolve()` never reads `req`. The parameter exist
 The test is what matters, and it should be property-based rather than a handful of examples:
 
 ```python
-@given(st.dictionaries(
-    st.sampled_from(["principal", "user", "role", "roles", "client_id",
-                     "sub", "assurance", "auth_method", "_meta"]),
-    st.text()))
+@given(
+    st.dictionaries(
+        st.sampled_from(
+            [
+                "principal",
+                "user",
+                "role",
+                "roles",
+                "client_id",
+                "sub",
+                "assurance",
+                "auth_method",
+                "_meta",
+            ]
+        ),
+        st.text(),
+    )
+)
 def test_client_cannot_influence_identity(poison):
     req = make_request(arguments=poison)
     assert identity.resolve(req, cfg) == cfg.context

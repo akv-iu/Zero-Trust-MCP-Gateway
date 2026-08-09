@@ -1,6 +1,7 @@
 """Shared types. Imports nothing from `gateway.*` except `errors`.
 
-`_tech/00-conventions.md` §3, amended by `_specs/ADR-001-transport-and-mirrored-metadata.md`.
+`_tech/00-conventions.md` §3, amended by
+`_specs/ADR-001-transport-and-mirrored-metadata.md`.
 
 Every model is frozen with ``extra="forbid"``. Immutability is the enforcement
 mechanism for PROTO-006 (one canonical authority) and IDENT-002 (identity may not
@@ -11,14 +12,19 @@ WAVE-0 FILE — shared spine. Parallel agents MUST NOT edit this.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Literal, Mapping
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
 type RequestId = str
 """uuid4().hex — unguessable and unique. Sortability is not required."""
+
+type JsonObject = dict[str, Any]
+"""A decoded JSON object. Spelled once so `dict` never appears bare in a signature —
+under pyright strict a bare `dict` poisons every value derived from it."""
 
 Operation = Literal["read", "create", "overwrite", "append", "rename", "delete"]
 RiskTier = Literal["R0", "R1", "R2", "R4"]  # R3 is not implemented in v1 (CONV-007)
@@ -39,9 +45,10 @@ def deep_freeze(v: Any) -> Any:
     Lists become tuples: a JSON array is data here, never a buffer to append to.
     """
     if isinstance(v, Mapping):
-        return MappingProxyType({k: deep_freeze(x) for k, x in v.items()})
-    if isinstance(v, (list, tuple)):
-        return tuple(deep_freeze(x) for x in v)
+        items = cast("Mapping[str, Any]", v)
+        return MappingProxyType({k: deep_freeze(x) for k, x in items.items()})
+    if isinstance(v, list | tuple):
+        return tuple(deep_freeze(x) for x in cast("list[Any]", v))
     return v
 
 
@@ -53,9 +60,10 @@ def thaw(v: Any) -> Any:
     request body needs the same. Call this AT the boundary and never store the result.
     """
     if isinstance(v, Mapping):
-        return {k: thaw(x) for k, x in v.items()}
-    if isinstance(v, (list, tuple)):
-        return [thaw(x) for x in v]
+        items = cast("Mapping[str, Any]", v)
+        return {k: thaw(x) for k, x in items.items()}
+    if isinstance(v, list | tuple):
+        return [thaw(x) for x in cast("list[Any]", v)]
     return v
 
 

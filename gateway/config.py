@@ -66,6 +66,10 @@ class ProtocolConfig(BaseModel):
     max_body_bytes: int = 1_048_576
     max_array_length: int = 1_000
     max_string_length: int = 65_536
+    max_object_keys: int = 500
+    """Keys in ONE object. Distinct from `max_total_fields`, which is the whole
+    document: a single object with 4,999 keys passes a 5,000-field budget while
+    being exactly the shape that makes a downstream schema validator quadratic."""
     max_total_fields: int = 5_000
     parse_budget_ms: int = 100
 

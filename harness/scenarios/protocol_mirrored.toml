@@ -1,0 +1,415 @@
+# Mirrored-metadata consistency — PROTO-007: one shape, one reason code, one row.
+#
+# The 2026-07-28 revision mirrors request metadata between HTTP headers and the
+# JSON-RPC body and requires a request whose two sides disagree to be REJECTED. The
+# specification states the reason in terms that name this product category directly:
+# to stop "different components in the network relying on different sources of truth
+# (e.g. a load balancer routing on the header value while the MCP server executes
+# based on the body value)."
+#
+# Every row here is a request that a header-reading intermediary would authorize and
+# a body-executing server would carry out differently. The comparison itself is the
+# SDK's (ADR-002); these rows exist because a delegated behaviour still has to be
+# proved, and because they are the gate on an SDK upgrade changing it.
+#
+# `expected_side_effect = "none"` throughout: unit 11 verifies that at the FIXTURE,
+# not in the gateway's reply. A denial the fixture contradicts is the worst outcome
+# the scoring knows (`is_lying_gateway`).
+
+corpus_version = "0.1.0"
+
+# ---------------------------------------------------------------------------
+# The split-authorization pair. The headline case, both directions.
+# ---------------------------------------------------------------------------
+
+[[scenario]]
+id = "proto-split-001"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "delete_file"
+arguments = { path = "workspace/notes.md" }
+expected_decision = "deny"
+expected_reason = "PROTO_HEADER_BODY_NAME_MISMATCH"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Header names a benign read; the body deletes. An intermediary authorizing on Mcp-Name approves read_file and the server destroys a file."
+transport = { header_name = "read_file" }
+
+[[scenario]]
+id = "proto-split-002"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_HEADER_BODY_NAME_MISMATCH"
+expected_side_effect = "none"
+risk_tier = "R2"
+notes = "The inverse. Proves the check is symmetric and not a one-sided allowlist — a gateway that only guarded the dangerous direction would pass proto-split-001 and fail here."
+transport = { header_name = "delete_file" }
+
+[[scenario]]
+id = "proto-split-003"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_HEADER_BODY_METHOD_MISMATCH"
+expected_side_effect = "none"
+risk_tier = "R2"
+notes = "Header claims the read-only tools/list while the body calls a tool. Routing on the method header would send this down a path with no tool authorization at all."
+transport = { header_method = "tools/list" }
+
+# ---------------------------------------------------------------------------
+# Presence rules — PROTO-005. Required-and-absent, prohibited-and-present.
+# ---------------------------------------------------------------------------
+
+[[scenario]]
+id = "proto-missing-001"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_METADATA_MISSING"
+expected_side_effect = "none"
+risk_tier = "R2"
+notes = "No Mcp-Name at all. Distinct from a mismatch: nothing was compared, so an intermediary downstream has no value to check and would have to invent one."
+transport = { omit = ["mcp-name"] }
+
+[[scenario]]
+id = "proto-missing-002"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_METADATA_MISSING"
+expected_side_effect = "none"
+risk_tier = "R2"
+notes = "No MCP-Protocol-Version header. The spec warns intermediaries not to trust mirrored headers when the version is absent; v1 refuses the request instead."
+transport = { omit = ["mcp-protocol-version"] }
+
+[[scenario]]
+id = "proto-missing-003"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_METADATA_MISSING"
+expected_side_effect = "none"
+risk_tier = "R2"
+notes = "Body carries no envelope metadata. The per-request envelope replaced the initialize handshake in 2026-07-28; absent, there is no protocol version to agree on."
+transport = { drop_meta = ["io.modelcontextprotocol/protocolVersion"] }
+
+[[scenario]]
+id = "proto-missing-004"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_METADATA_MISSING"
+expected_side_effect = "none"
+risk_tier = "R2"
+notes = "Envelope missing clientCapabilities. A stateless request declares its own capabilities; without them the server cannot know what it may return."
+transport = { drop_meta = ["io.modelcontextprotocol/clientCapabilities"] }
+
+# ---------------------------------------------------------------------------
+# Duplicates — PROTO-004. Rejected even when the copies agree.
+# ---------------------------------------------------------------------------
+
+[[scenario]]
+id = "proto-dup-001"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_METADATA_DUPLICATE"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Two Mcp-Name headers with different values. A first-copy reader and a last-copy reader authorize different tools from the same request — the divergence in its purest form."
+transport = { add = [["mcp-name", "delete_file"]] }
+
+[[scenario]]
+id = "proto-dup-002"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_METADATA_DUPLICATE"
+expected_side_effect = "none"
+risk_tier = "R2"
+notes = "Two IDENTICAL Mcp-Name headers. No legitimate use, and permitting them invites intermediary-dependent collapsing — the state that makes proto-dup-001 possible later."
+transport = { add = [["mcp-name", "read_file"]] }
+
+[[scenario]]
+id = "proto-dup-003"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_METADATA_DUPLICATE"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Duplicated Mcp-Method. Same attack aimed at routing rather than at tool selection."
+transport = { add = [["mcp-method", "tools/list"]] }
+
+# ---------------------------------------------------------------------------
+# Malformed values — PROTO-004. Present but unusable is not absent.
+# ---------------------------------------------------------------------------
+
+[[scenario]]
+id = "proto-malformed-001"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_METADATA_INVALID"
+expected_side_effect = "none"
+risk_tier = "R2"
+notes = "Empty Mcp-Name. Treating empty as absent converts a header the client did send into one it did not, and skips the comparison entirely."
+transport = { omit = ["mcp-name"], add = [["mcp-name", ""]] }
+
+[[scenario]]
+id = "proto-malformed-002"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_METADATA_INVALID"
+expected_side_effect = "none"
+risk_tier = "R2"
+notes = "Mcp-Name with trailing whitespace. Rejected rather than trimmed: every intermediary strips whitespace slightly differently, so normalising here would create the divergence it was meant to remove."
+transport = { omit = ["mcp-name"], add = [["mcp-name", "read_file "]], http_fate = "normalized" }
+
+[[scenario]]
+id = "proto-malformed-003"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_METADATA_INVALID"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Mcp-Name carrying a CR. Header injection, aimed at any component that logs or forwards the value as a line."
+transport = { omit = ["mcp-name"], add = [["mcp-name", "read_file{CR}x"]], http_fate = "rejected" }
+
+[[scenario]]
+id = "proto-malformed-004"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_METADATA_INVALID"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Malformed base64 sentinel. Non-canonical base64 decodes differently in different libraries — two header values reaching the same body value is a bypass, so the SDK re-encodes and compares. Carries an LF, so a conforming HTTP parser refuses the request one layer earlier."
+transport = { omit = ["mcp-name"], add = [["mcp-name", "=?base64?cmVh{LF}ZF9maWxl?="]], http_fate = "rejected" }
+
+[[scenario]]
+id = "proto-malformed-005"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_METADATA_INVALID"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Non-canonical base64 with no control character in it, so unlike proto-malformed-004 this one reaches the guard over HTTP. b64decode without validate=True silently discards non-alphabet bytes, which is how two different header values decode to one body value."
+transport = { omit = ["mcp-name"], add = [["mcp-name", "=?base64?cmVhZF9maWxl!?="]] }
+
+# ---------------------------------------------------------------------------
+# Version — PROTO-008 and _tech/02 §3.5. Spec-currency as a security property.
+# ---------------------------------------------------------------------------
+
+[[scenario]]
+id = "proto-version-001"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_VERSION_MISMATCH"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Header claims the current revision; the envelope claims an older one. A downgrade aimed at an intermediary that decides whether to trust mirrored headers by reading the header's own version claim."
+transport = { body_version = "2025-06-18" }
+
+[[scenario]]
+id = "proto-version-002"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_VERSION_UNSUPPORTED"
+expected_side_effect = "none"
+risk_tier = "R2"
+notes = "Consistent downgrade to a session-era revision. Denied, not adapted — there is no compatibility path, which is the point."
+transport = { header_version = "2025-06-18", body_version = "2025-06-18" }
+
+[[scenario]]
+id = "proto-version-003"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_VERSION_UNSUPPORTED"
+expected_side_effect = "none"
+risk_tier = "R2"
+notes = "An unknown future revision. Unknown is denied for the same reason old is: the gateway cannot enforce rules it has not read."
+transport = { header_version = "2099-01-01", body_version = "2099-01-01" }
+
+# ---------------------------------------------------------------------------
+# Envelope and parser — PROTO-009, PROTO-011, PROTO-012.
+# ---------------------------------------------------------------------------
+
+[[scenario]]
+id = "proto-envelope-001"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_JSON_INVALID"
+expected_side_effect = "none"
+risk_tier = "R0"
+notes = "Truncated JSON."
+transport = { raw_body = '{"jsonrpc":"2.0","id":1,"method":"tools/call"' }
+
+[[scenario]]
+id = "proto-envelope-002"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_DUPLICATE_FIELD"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Two `name` keys in params. Last-key-wins parsers and first-key-wins parsers select different tools from identical bytes; stdlib json with object_pairs_hook is the only way to see this at all."
+transport = { raw_body = '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file","name":"delete_file"}}' }
+
+[[scenario]]
+id = "proto-envelope-003"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_JSONRPC_INVALID"
+expected_side_effect = "none"
+risk_tier = "R0"
+notes = "A batch. v1 supports no batch shape: it would need one authorization decision and one audit event per element, and has neither."
+transport = { raw_body = '[{"jsonrpc":"2.0","id":1,"method":"tools/list"}]' }
+
+[[scenario]]
+id = "proto-envelope-004"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_JSONRPC_INVALID"
+expected_side_effect = "none"
+risk_tier = "R0"
+notes = "A JSON `true` as the request id. bool is an int subclass, so a naive isinstance check accepts it and correlation silently breaks."
+transport = { raw_body = '{"jsonrpc":"2.0","id":true,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}' }
+
+[[scenario]]
+id = "proto-limit-001"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_LIMIT_EXCEEDED"
+expected_side_effect = "none"
+risk_tier = "R0"
+notes = "Deep nesting. Without a byte-level prescan json.loads hits CPython's recursion ceiling and raises RecursionError, which is an internal defect and a 500, not a denial and a 413."
+transport = { raw_body = "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[" }
+
+# ---------------------------------------------------------------------------
+# Default-deny on method — PROTO-010.
+# ---------------------------------------------------------------------------
+
+[[scenario]]
+id = "proto-method-001"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_METHOD_NOT_ALLOWED"
+expected_side_effect = "none"
+risk_tier = "R2"
+notes = "resources/read is legal MCP and outside the v1 allowlist. Denied, not proxied: being valid protocol is not the same as being authorized."
+transport = { raw_body = '{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"file:///etc/passwd","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}', header_method = "resources/read", header_name = "file:///etc/passwd" }
+
+[[scenario]]
+id = "proto-mrtr-001"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_MRTR_UNSUPPORTED"
+expected_side_effect = "none"
+risk_tier = "R2"
+notes = "Mid-request tool return (SEP-2322). Refused rather than proxied: an inputResponses payload continues an exchange the gateway never authorized and holds no decision for."
+transport = { body_extra = { inputResponses = "[]" } }
+
+# ---------------------------------------------------------------------------
+# The control. Without it every row above passes on a gateway that denies
+# everything, which would score 100% on the malicious corpus and be useless.
+# ---------------------------------------------------------------------------
+
+[[scenario]]
+id = "proto-legit-001"
+class = "legitimate"
+layer = "protocol"
+principal = "developer"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "allow"
+expected_reason = "POLICY_SCOPED_READ"
+expected_side_effect = { op = "read", path_contains = "public/documentation.txt" }
+risk_tier = "R2"
+notes = "A fully conforming request: matching headers, current revision, complete envelope. Must pass, and the fixture must be observed to have read the file."

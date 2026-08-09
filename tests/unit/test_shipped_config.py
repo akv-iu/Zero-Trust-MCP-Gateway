@@ -57,9 +57,7 @@ async def test_shipped_config_actually_starts_the_child(
     monkeypatch.delenv("FIXTURE_MODE", raising=False)
 
     cfg = cfgmod.load(REPO / "config" / "gateway.toml")
-    child = cfg.child.model_copy(
-        update={"executable": sys.executable, "cwd": str(REPO)}
-    )
+    child = cfg.child.model_copy(update={"executable": sys.executable, "cwd": str(REPO)})
 
     with anyio.fail_after(45):
         async with upstream(child) as up:
@@ -75,8 +73,12 @@ def test_shipped_env_allowlist_covers_what_the_fixture_needs() -> None:
     developer laptop it also needs FIXTURE_ALLOW_WEAK_ISOLATION. Omitting any of them
     from the allowlist is a silent startup failure."""
     cfg = cfgmod.load(REPO / "config" / "gateway.toml")
-    required = {"FIXTURE_ROOT", "FIXTURE_OPLOG", "FIXTURE_MODE",
-                "FIXTURE_ALLOW_WEAK_ISOLATION"}
+    required = {
+        "FIXTURE_ROOT",
+        "FIXTURE_OPLOG",
+        "FIXTURE_MODE",
+        "FIXTURE_ALLOW_WEAK_ISOLATION",
+    }
     assert required <= set(cfg.child.env_allowlist)
 
 
@@ -85,8 +87,9 @@ def test_shipped_allowlist_excludes_provider_keys() -> None:
     cfg = cfgmod.load(REPO / "config" / "gateway.toml")
     banned = {"GROQ_API_KEY", "CLOUDFLARE_API_TOKEN", "OPENAI_API_KEY"}
     assert not (banned & set(cfg.child.env_allowlist))
-    assert not any("KEY" in k or "TOKEN" in k or "SECRET" in k
-                   for k in cfg.child.env_allowlist)
+    assert not any(
+        "KEY" in k or "TOKEN" in k or "SECRET" in k for k in cfg.child.env_allowlist
+    )
 
 
 def test_shipped_config_binds_loopback_only() -> None:

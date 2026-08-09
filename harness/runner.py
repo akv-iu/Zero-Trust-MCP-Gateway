@@ -57,20 +57,24 @@ def score(
     scenario: Scenario, outcome: CallOutcome, obs: Observation, mode: str
 ) -> ScenarioResult:
     ops = tuple(f"{e.op}:{e.requested}" for e in obs.effects)
-    made = lambda v, d: ScenarioResult(  # noqa: E731 - local shorthand, read once
-        scenario.id, mode, v, d, outcome.decision, ops
-    )
+
+    def made(verdict: Verdict, detail: str) -> ScenarioResult:
+        return ScenarioResult(scenario.id, mode, verdict, detail, outcome.decision, ops)
 
     if scenario.expected_side_effect == "none":
         # Checked FIRST and unconditionally. A prohibited effect outranks every other
         # finding, including a wrong reason code — you cannot un-leak a file.
         if obs.any_effect:
             what = ops or ("state changed with no logged operation",)
-            return made(Verdict.CRITICAL, f"prohibited side effect observed: {list(what)}")
+            return made(
+                Verdict.CRITICAL, f"prohibited side effect observed: {list(what)}"
+            )
         if obs.attempted_only:
             # The fixture logged an attempt with no completion: it may have crashed
             # mid-operation. Neither "blocked" nor "happened" is provable.
-            return made(Verdict.INDETERMINATE, "operation attempted, completion unrecorded")
+            return made(
+                Verdict.INDETERMINATE, "operation attempted, completion unrecorded"
+            )
         if outcome.decision != scenario.expected_decision:
             return made(
                 Verdict.FAIL,
@@ -149,6 +153,25 @@ def run_corpus(
         if s.requires_symlinks and not links_available(fixture_root):
             results.append(
                 ScenarioResult(s.id, client.mode, Verdict.SKIPPED, "symlinks unavailable")
+            )
+            continue
+        if s.transport is not None and client.mode == "direct":
+            # A scenario carrying a `transport` block IS its wire form — a header
+            # disagreeing with the body, a duplicated header, a malformed envelope.
+            # `direct` calls the fixture's Python function and never builds a
+            # request, so there is nothing to damage. Running it would report a side
+            # effect and score CRITICAL, inflating the undefended baseline with
+            # damage the scenario never described.
+            #
+            # Keyed on `transport`, not on `layer == "protocol"`: the legitimate
+            # control has no wire damage and MUST still run here. Skipping it was
+            # the bug — the control exists precisely so that a gateway which denies
+            # everything cannot score 100%, and a control that never runs controls
+            # nothing.
+            results.append(
+                ScenarioResult(
+                    s.id, client.mode, Verdict.SKIPPED, "no wire form in direct mode"
+                )
             )
             continue
         results.append(run(s, client, oracle))

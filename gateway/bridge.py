@@ -15,9 +15,9 @@ import codecs
 import os
 import threading
 from collections import deque
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
-from typing import Any
+from typing import Any, cast
 
 import anyio
 import mcp_types
@@ -27,7 +27,6 @@ from mcp.shared.exceptions import MCPError
 
 from gateway.config import ChildConfig
 from gateway.errors import GatewayDenial, ReasonCode, RouteDenial
-
 
 MAX_STDERR_LINE = 2048
 STDERR_CHUNK = 4096
@@ -114,8 +113,9 @@ def _as_denial(exc: BaseException) -> GatewayDenial | None:
     if isinstance(exc, GatewayDenial):
         return exc
     if isinstance(exc, BaseExceptionGroup):
-        for sub in exc.exceptions:
-            found = _as_denial(sub)
+        group = cast("BaseExceptionGroup[BaseException]", exc)
+        for nested in group.exceptions:
+            found = _as_denial(nested)
             if found is not None:
                 return found
     return None
@@ -179,7 +179,9 @@ class UpstreamHandle:
                 ReasonCode.ROUTE_UPSTREAM_UNAVAILABLE, detail=f"stdio: {e!r}"
             ) from e
 
-    async def cancel(self, request_id: str | int, reason: str = "client disconnected") -> bool:
+    async def cancel(
+        self, request_id: str | int, reason: str = "client disconnected"
+    ) -> bool:
         """Translate an edge-side disconnect into stdio's cancellation notification.
 
         Transport asymmetry (ADR-001 §4): on Streamable HTTP the client cancels by
@@ -199,7 +201,7 @@ class UpstreamHandle:
         notification = mcp_types.CancelledNotification(
             method="notifications/cancelled",
             params=mcp_types.CancelledNotificationParams(
-                requestId=request_id, reason=reason
+                request_id=request_id, reason=reason
             ),
         )
         try:
@@ -221,7 +223,7 @@ def _child_env(cfg: ChildConfig) -> dict[str, str]:
 
 
 @asynccontextmanager
-async def upstream(cfg: ChildConfig) -> AsyncIterator[UpstreamHandle]:
+async def upstream(cfg: ChildConfig) -> AsyncGenerator[UpstreamHandle]:
     """Spawn the child, complete the handshake, yield a handle, tear it down.
 
     Every failure path out of here is a RouteDenial with a reason code. Callers
@@ -244,24 +246,26 @@ async def upstream(cfg: ChildConfig) -> AsyncIterator[UpstreamHandle]:
 
     handed_off = False
     try:
-        async with stdio_client(params, errlog=errlog) as (read, write):
-            async with ClientSession(read, write) as session:
-                try:
-                    with anyio.fail_after(cfg.startup_timeout_s):
-                        await _handshake(session)
-                except (TimeoutError, Exception) as e:
-                    # BRIDGE-008: never become ready; never serve protected requests.
-                    raise RouteDenial(
-                        ReasonCode.ROUTE_UPSTREAM_UNAVAILABLE,
-                        detail=f"handshake failed: {e!r}; stderr={list(ring)[-5:]}",
-                    ) from e
+        async with (
+            stdio_client(params, errlog=errlog) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            try:
+                with anyio.fail_after(cfg.startup_timeout_s):
+                    await _handshake(session)
+            except (TimeoutError, Exception) as e:
+                # BRIDGE-008: never become ready; never serve protected requests.
+                raise RouteDenial(
+                    ReasonCode.ROUTE_UPSTREAM_UNAVAILABLE,
+                    detail=f"handshake failed: {e!r}; stderr={list(ring)[-5:]}",
+                ) from e
 
-                handle = UpstreamHandle(session, ring)
-                handed_off = True
-                try:
-                    yield handle
-                finally:
-                    handle.alive = False
+            handle = UpstreamHandle(session, ring)
+            handed_off = True
+            try:
+                yield handle
+            finally:
+                handle.alive = False
     except GatewayDenial:
         raise
     except BaseException as e:

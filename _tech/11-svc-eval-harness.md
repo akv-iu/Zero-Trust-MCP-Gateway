@@ -53,17 +53,22 @@ Two independent sources, both required — state diffing alone misses reads, opl
 ```python
 @dataclass
 class Observation:
-    ops: list[dict]              # fixture oplog entries for this request window
-    tree_before: str             # tree_hash
+    ops: list[dict]  # fixture oplog entries for this request window
+    tree_before: str  # tree_hash
     tree_after: str
+
 
 class Oracle:
     def snapshot(self) -> None:  # before each scenario
-        self._before = tree_hash(ROOT); self._oplog_pos = oplog_size()
+        self._before = tree_hash(ROOT)
+        self._oplog_pos = oplog_size()
 
     def observe(self) -> Observation:
-        return Observation(ops=read_oplog_from(self._oplog_pos),
-                           tree_before=self._before, tree_after=tree_hash(ROOT))
+        return Observation(
+            ops=read_oplog_from(self._oplog_pos),
+            tree_before=self._before,
+            tree_after=tree_hash(ROOT),
+        )
 ```
 
 ### Correlating ops to requests (HARN-009)
@@ -84,13 +89,18 @@ Anything that cannot be joined — audit event present, oplog window ambiguous, 
 
 ```python
 def score(s: Scenario, decision, obs, audit_event) -> Verdict:
-    if audit_event is None: return Verdict.INDETERMINATE
-    if decision != s.expected_decision:                  return Verdict.FAIL
-    if audit_event.reason_code != s.expected_reason:     return Verdict.FAIL      # HARN-003
+    if audit_event is None:
+        return Verdict.INDETERMINATE
+    if decision != s.expected_decision:
+        return Verdict.FAIL
+    if audit_event.reason_code != s.expected_reason:
+        return Verdict.FAIL  # HARN-003
     effect = classify_effect(obs)
     if s.expected_side_effect == "none":
-        return Verdict.CRITICAL if effect else Verdict.PASS                       # HARN-007
-    return Verdict.PASS if matches(effect, s.expected_side_effect) else Verdict.FALSE_SUCCESS
+        return Verdict.CRITICAL if effect else Verdict.PASS  # HARN-007
+    return (
+        Verdict.PASS if matches(effect, s.expected_side_effect) else Verdict.FALSE_SUCCESS
+    )
 ```
 
 `CRITICAL` — denied but an effect occurred — gets its own top-line count in the report and its own non-zero exit code. It must never be able to look like an ordinary failure.
@@ -124,9 +134,11 @@ async def paired_benchmark(n: int, scenario: Scenario) -> list[tuple[int, int]]:
     samples = []
     for i in range(n):
         if i % 2 == 0:
-            d = await timed(direct, scenario);  p = await timed(protected, scenario)
+            d = await timed(direct, scenario)
+            p = await timed(protected, scenario)
         else:
-            p = await timed(protected, scenario); d = await timed(direct, scenario)
+            p = await timed(protected, scenario)
+            d = await timed(direct, scenario)
         samples.append((d, p))
     return samples
 ```
@@ -136,9 +148,15 @@ Alternating the *order* within pairs too, cancelling first-call and cache-warmin
 Discard the first 10% as warmup, state that you did. Report the paired difference distribution:
 
 ```python
-diffs = [(p - d) / 1e6 for d, p in samples[warmup:]]     # ms
-stats = {"n": len(diffs), "p50": quantile(diffs, .5), "p95": quantile(diffs, .95),
-         "p99": quantile(diffs, .99), "min": min(diffs), "max": max(diffs)}
+diffs = [(p - d) / 1e6 for d, p in samples[warmup:]]  # ms
+stats = {
+    "n": len(diffs),
+    "p50": quantile(diffs, 0.5),
+    "p95": quantile(diffs, 0.95),
+    "p99": quantile(diffs, 0.99),
+    "min": min(diffs),
+    "max": max(diffs),
+}
 ```
 
 `statistics.quantiles(diffs, n=100, method="inclusive")` — stdlib, no numpy.
@@ -156,15 +174,29 @@ Stage breakdown comes from the audit log's `stage_latency_ms`, joined by `reques
 Generated cases are counted and reported **separately** from hand-written ones — blending them hides the part the author did not choose.
 
 ```python
-path_segments = st.sampled_from(["..", ".", "%2e%2e", "%252e%252e", "\x00", "public",
-                                 "confidential", "traps/escape_link", "CON", "x.", "//"])
+path_segments = st.sampled_from(
+    [
+        "..",
+        ".",
+        "%2e%2e",
+        "%252e%252e",
+        "\x00",
+        "public",
+        "confidential",
+        "traps/escape_link",
+        "CON",
+        "x.",
+        "//",
+    ]
+)
+
 
 @given(st.lists(path_segments, min_size=1, max_size=8).map("/".join))
-@settings(deadline=None)                     # gateway round trip exceeds the default
+@settings(deadline=None)  # gateway round trip exceeds the default
 async def test_generated_paths(path, gateway, oracle):
     decision = await gateway.call("read_file", {"path": path})
     obs = oracle.observe()
-    assert not (decision.denied and effect_occurred(obs))         # the CRITICAL invariant
+    assert not (decision.denied and effect_occurred(obs))  # the CRITICAL invariant
     if decision.allowed:
         assert resolved_within_root(obs)
 ```
@@ -209,16 +241,20 @@ Report section order — lead with the claim, then the numbers, then the limits:
 The most important test in the project, and the one most likely to be skipped.
 
 ```python
-@pytest.mark.parametrize("mutation", [
-    "canonicalize.fs.containment_check",     # make it always pass
-    "policy.validate_result",                # make it always allow
-    "registry.resolve",                      # make it accept unknown tools
-])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "canonicalize.fs.containment_check",  # make it always pass
+        "policy.validate_result",  # make it always allow
+        "registry.resolve",  # make it accept unknown tools
+    ],
+)
 async def test_harness_detects_broken_gateway(mutation, monkeypatch, corpus):
     monkeypatch.setattr(mutation, _always_permissive)
     results = await run_corpus(corpus)
-    assert any(r.verdict is Verdict.CRITICAL for r in results), \
+    assert any(r.verdict is Verdict.CRITICAL for r in results), (
         "harness failed to detect a deliberately broken gateway"
+    )
 ```
 
 Build it in week 1 with the oracle skeleton and run it every release. A harness that cannot detect a broken gateway is measuring nothing, and this is the only test that proves it can.

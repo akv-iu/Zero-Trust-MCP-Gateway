@@ -12,10 +12,11 @@
 ```python
 mcp = FastMCP("filesystem-fixture")
 
+
 @mcp.tool()
 def read_file(path: str) -> str:
     with oplog("read", path):
-        return (ROOT / path).read_text("utf-8")     # NAIVE ON PURPOSE (FIX-007)
+        return (ROOT / path).read_text("utf-8")  # NAIVE ON PURPOSE (FIX-007)
 ```
 
 **No canonicalization, no containment check, no traversal rejection.** `(ROOT / path)` with an absolute `path` escapes `ROOT` entirely — that is the point. The fixture's unsafety is the experimental control; if it defended itself, every gateway test would pass vacuously.
@@ -35,9 +36,15 @@ Log at the lowest possible point — a context manager wrapping the actual sysca
 ```python
 @contextmanager
 def oplog(operation: str, path: str):
-    entry = {"ts": datetime.now(UTC).isoformat(), "op": operation, "requested": path,
-             "resolved": None, "outcome": "attempted", "pid": os.getpid()}
-    _append(entry)                                   # BEFORE the operation
+    entry = {
+        "ts": datetime.now(UTC).isoformat(),
+        "op": operation,
+        "requested": path,
+        "resolved": None,
+        "outcome": "attempted",
+        "pid": os.getpid(),
+    }
+    _append(entry)  # BEFORE the operation
     try:
         entry["resolved"] = str((ROOT / path).absolute())
         yield
@@ -83,7 +90,7 @@ Symlink creation wrapped in `try/except OSError` → record the trap as unavaila
 def reset() -> None:
     shutil.rmtree(ROOT, ignore_errors=True)
     build_tree(ROOT)
-    assert tree_hash(ROOT) == EXPECTED_HASH      # verified, not assumed
+    assert tree_hash(ROOT) == EXPECTED_HASH  # verified, not assumed
 ```
 
 `tree_hash` walks sorted paths, hashing `relpath + mode + content` (and link targets for symlinks). Same function the oracle uses for state diffing — one implementation, so a bug shows up in both places at once.
@@ -107,9 +114,10 @@ def self_check() -> None:
     for probe in ("/etc/passwd", str(Path.home() / ".ssh"), "C:/Windows/System32/config"):
         p = Path(probe)
         try:
-            if p.exists(): sys.exit(f"ISOLATION FAILURE: {probe} is reachable")
+            if p.exists():
+                sys.exit(f"ISOLATION FAILURE: {probe} is reachable")
         except OSError:
-            pass          # unreachable is the desired outcome
+            pass  # unreachable is the desired outcome
 ```
 
 On the weak tier this check **fails** — `/etc/passwd` or the home directory genuinely is reachable. That is correct and important: on the weak tier the fixture must refuse to start unless `FIXTURE_ALLOW_WEAK_ISOLATION=1` is set explicitly, and the harness must stamp every report produced under it with `isolation: weak`.

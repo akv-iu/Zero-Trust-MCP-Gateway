@@ -81,19 +81,29 @@ Spec says *conflicting* duplicates. Rejecting **all** duplicates is stricter, si
 
 ```python
 def prescan(body: bytes, max_depth: int, max_bytes: int) -> None:
-    if len(body) > max_bytes: raise ProtocolDenial(PROTO_LIMIT_EXCEEDED)
-    depth = 0; in_str = False; esc = False
+    if len(body) > max_bytes:
+        raise ProtocolDenial(PROTO_LIMIT_EXCEEDED)
+    depth = 0
+    in_str = False
+    esc = False
     for b in body:
-        if esc: esc = False; continue
-        if in_str:
-            if b == 0x5C: esc = True
-            elif b == 0x22: in_str = False
+        if esc:
+            esc = False
             continue
-        if b == 0x22: in_str = True
-        elif b in (0x7B, 0x5B):            # { [
+        if in_str:
+            if b == 0x5C:
+                esc = True
+            elif b == 0x22:
+                in_str = False
+            continue
+        if b == 0x22:
+            in_str = True
+        elif b in (0x7B, 0x5B):  # { [
             depth += 1
-            if depth > max_depth: raise ProtocolDenial(PROTO_LIMIT_EXCEEDED)
-        elif b in (0x7D, 0x5D): depth -= 1  # } ]
+            if depth > max_depth:
+                raise ProtocolDenial(PROTO_LIMIT_EXCEEDED)
+        elif b in (0x7D, 0x5D):
+            depth -= 1  # } ]
 ```
 
 Single pass, no allocation, string-aware so braces inside strings don't count. This is what makes `PROTO-013` true rather than aspirational.
@@ -114,20 +124,23 @@ The complete mirrored set, confirmed against the spec ([ADR-001](../_specs/ADR-0
 ```python
 @dataclass(frozen=True)
 class MirrorRule:
-    body_path: tuple[str, ...] | tuple[tuple[str, ...], ...]   # alternatives allowed
+    body_path: tuple[str, ...] | tuple[tuple[str, ...], ...]  # alternatives allowed
     methods: Literal["*"] | frozenset[str]
-    sentinel: bool = False        # may carry =?base64?…?=
-    numeric: bool = False         # compare numerically when the schema type is integer
+    sentinel: bool = False  # may carry =?base64?…?=
+    numeric: bool = False  # compare numerically when the schema type is integer
+
 
 STANDARD: dict[str, MirrorRule] = {
     "mcp-protocol-version": MirrorRule(
         body_path=("params", "_meta", "io.modelcontextprotocol/protocolVersion"),
-        methods="*"),
+        methods="*",
+    ),
     "mcp-method": MirrorRule(body_path=("method",), methods="*"),
     "mcp-name": MirrorRule(
-        body_path=(("params", "name"), ("params", "uri")),      # name OR uri
+        body_path=(("params", "name"), ("params", "uri")),  # name OR uri
         methods=frozenset({"tools/call", "resources/read", "prompts/get"}),
-        sentinel=True),
+        sentinel=True,
+    ),
 }
 # "mcp-param-{name}" rules are derived per tool from x-mcp-header — see §3.3
 ```
@@ -143,7 +156,8 @@ ASGI delivers `scope["headers"]` as a list of `(bytes, bytes)` pairs, so duplica
 ```python
 def collect(pairs: Sequence[tuple[str, str]], name: str) -> str | None:
     vals = [v for k, v in pairs if k.lower() == name]
-    if len(vals) > 1: raise ProtocolDenial(PROTO_METADATA_DUPLICATE)   # even if equal
+    if len(vals) > 1:
+        raise ProtocolDenial(PROTO_METADATA_DUPLICATE)  # even if equal
     return vals[0] if vals else None
 ```
 
@@ -154,17 +168,19 @@ Reject duplicates unconditionally, not only when they differ. Two equal headers 
 Applies to `Mcp-Name` and every `Mcp-Param-*`. Decode **exactly once**, then compare — the same discipline as `CANON-001`.
 
 ```python
-_SENTINEL = re.compile(r"^=\?base64\?(.*)\?=$")     # markers lowercase, case-sensitive
+_SENTINEL = re.compile(r"^=\?base64\?(.*)\?=$")  # markers lowercase, case-sensitive
+
 
 def decode_sentinel(v: str) -> str:
     m = _SENTINEL.match(v)
-    if not m: return v
+    if not m:
+        return v
     try:
         out = base64.b64decode(m.group(1), validate=True).decode("utf-8")
     except (binascii.Error, UnicodeDecodeError):
         raise ProtocolDenial(PROTO_METADATA_INVALID)
-    if _SENTINEL.match(out):                        # decoded value is itself a sentinel
-        raise ProtocolDenial(PROTO_METADATA_INVALID)   # one pass only — never decode twice
+    if _SENTINEL.match(out):  # decoded value is itself a sentinel
+        raise ProtocolDenial(PROTO_METADATA_INVALID)  # one pass only — never decode twice
     return out
 ```
 
@@ -187,7 +203,7 @@ Numeric comparison for integer-typed params:
 
 ```python
 def compare_numeric(hv: str, bv: Any) -> bool:
-    if not _INT_LITERAL.fullmatch(hv):    # ^-?(0|[1-9][0-9]*)$ — canonical only
+    if not _INT_LITERAL.fullmatch(hv):  # ^-?(0|[1-9][0-9]*)$ — canonical only
         raise ProtocolDenial(PROTO_METADATA_INVALID)
     return isinstance(bv, int) and not isinstance(bv, bool) and int(hv) == bv
 ```
@@ -198,9 +214,10 @@ Narrow the accepted header form rather than broadening the comparison: `0042`, `
 
 ```python
 def _norm(v: str) -> str:
-    if v != v.strip():                 raise ProtocolDenial(PROTO_METADATA_INVALID)
+    if v != v.strip():
+        raise ProtocolDenial(PROTO_METADATA_INVALID)
     if any(ord(c) < 0x20 or ord(c) == 0x7F for c in v):
-                                       raise ProtocolDenial(PROTO_METADATA_INVALID)
+        raise ProtocolDenial(PROTO_METADATA_INVALID)
     return unicodedata.normalize("NFC", v)
 ```
 

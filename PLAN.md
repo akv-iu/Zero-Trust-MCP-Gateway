@@ -131,8 +131,8 @@ Ordered so that each step is runnable and testable the day it lands. Nothing is 
 | 2 | `11-svc-eval-harness` (skeleton) | 10 | Scenario schema loads; `direct` mode runs; side-effect oracle observes real damage | **done** |
 | 3 | `01-svc-stdio-bridge` | 10 | Client → gateway → fixture passthrough works, zero policy | **done** |
 | 4 | `09-svc-audit-log` | — | Every passthrough writes one JSONL event | **done** |
-| 5 | `02-svc-protocol-guard` | 01, 09 | Malformed JSON-RPC and header/body mismatch rejected + audited | next |
-| 6 | `03-svc-identity-resolver` | 09 | Principal appears in the audit event, labelled `local_config` | |
+| 5 | `02-svc-protocol-guard` | 01, 09 | Malformed JSON-RPC and header/body mismatch rejected + audited | **done** |
+| 6 | `03-svc-identity-resolver` | 09 | Principal appears in the audit event, labelled `local_config` | next |
 | 7 | `04-svc-registry` | 02, 09 | Unregistered server/tool denied; schema fingerprint recorded | |
 | 8 | `05-svc-canonicalizer-fs` | 04 | Traversal/encoding/symlink cases resolve to a canonical path or reject | |
 | 9 | `06-svc-policy-broker` | 03, 04, 05, 09 | OPA allow/deny with reason code; OPA killed → all protected calls denied | |

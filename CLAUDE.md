@@ -90,12 +90,16 @@ Oracle correlation is by **byte offset into the operation log**, which is valid 
 
 ## Working rules
 
+- **The transport normalizes before the guard sees it, and the corpus records that.** `Transport.http_fate` on each protocol scenario says what a conforming HTTP/1.1 recipient does first: `delivered`, `normalized` (RFC 9110 strips edge OWS, so the request that arrives is legitimate), or `rejected` (a CR/LF in a field value — h11 refuses it and the gateway never runs, so no audit event exists either). Measured in `tests/integration/test_protocol_over_http.py`, which writes requests **by hand over a socket** because `httpx` refuses to build them.
 - **A passing test proves nothing until you have seen it fail for the right reason.** Two tests in this repo were self-fulfilling and were caught by deliberately breaking the production code and confirming the test then failed. Do this for any load-bearing test.
 - `harness/scenarios/*.toml` are **data, not test code** — the corpus is a publishable deliverable. TOML cannot carry control characters, so use the `{NUL}` / `{CR}` / `{LF}` / `{TAB}` / `{DEL}` placeholders, expanded at load.
 - **No latency gate.** The benchmark measures and publishes whatever number comes out, with the co-location caveat. Never add a threshold assertion, and keep the benchmark out of pytest so one cannot creep in.
 - Never write "zero authorization bypasses" in any report. The scoped claim is in `PLAN.md` §6.2, and a CI check should enforce its absence.
 - Spec-to-code ratio must fall. Do not write a requirement that is not being implemented in the same change.
-- **Build order** is `PLAN.md` §4.2. Built so far: foundation, 10 (fixture), 11 (harness skeleton), 09 (audit). Remaining stubs raise `NotImplementedError` with their owning unit named — **implement the body, keep the signature**.
+- **Build order** is `PLAN.md` §4.2. Built so far: foundation, 10 (fixture), 11 (harness skeleton), 09 (audit), 01 (edge + bridge), 02 (protocol guard). Next is 03. Remaining stubs raise `NotImplementedError` with their owning unit named — **implement the body, keep the signature**.
+- **Unit 02 delegates the comparison and owns everything around it.** `gateway/protocol.py` calls `mcp.shared.inbound`; what is ours is the byte prescan, duplicate-key detection, structural limits, envelope shape, the method allowlist, MRTR refusal, and the mapping onto `ReasonCode`. The one place we depend on SDK *wording* is recovering which mirrored field disagreed from its `HEADER_MISMATCH` message — pinned by `test_every_mismatch_shape_maps_to_its_own_code`, which drives each shape through the real ladder.
+- **`mcp` is pinned exactly, and the pin is a security control.** An SDK upgrade can change what the gateway believes a request *means*. `harness/scenarios/protocol_mirrored.toml` is the upgrade gate; `tests/unit/test_sdk_pin.py` is the tripwire. Move `VALIDATED_AGAINST` and the `pyproject.toml` pin together, with the corpus green.
+- **`Mcp-Param-*` is checked at stage 04, not 02.** The `x-mcp-header` annotations live in the *approved* `inputSchema`, which only the registry resolves. `protocol.check_param_headers()` is the function; unit 04 calls it. Still before policy and the router, so PROTO-002 holds.
 
 ## Environment
 

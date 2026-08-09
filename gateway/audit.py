@@ -15,13 +15,14 @@ from __future__ import annotations
 import json
 import os
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Any
 
 import anyio
+import anyio.to_thread
 from pydantic import TypeAdapter, ValidationError
 
 from gateway.audit_schema import AuditRecord, LifecycleEvent, Outcome, RequestEvent
@@ -35,7 +36,7 @@ from gateway.errors import (
 )
 from gateway.timing import StageTimer
 
-_RECORD = TypeAdapter(AuditRecord)
+_RECORD: TypeAdapter[AuditRecord] = TypeAdapter(AuditRecord)
 
 #: Reason code -> terminal outcome. Collapsing these would destroy the evidence the
 #: report depends on: a cancelled request and a denied one mean different things.
@@ -75,7 +76,7 @@ class AuditBuilder:
         self._fields.update(kw)
 
     @contextmanager
-    def stage(self, name: Stage | str) -> Iterator[None]:
+    def stage(self, name: Stage | str) -> Generator[None]:
         with self._timer.stage(name):
             yield
 
@@ -144,7 +145,9 @@ class AuditBuilder:
             outcome="error",
         )
 
-    async def finalize_and_write(self, sink: AuditSink, cfg: Config | None = None) -> None:
+    async def finalize_and_write(
+        self, sink: AuditSink, cfg: Config | None = None
+    ) -> None:
         """Exactly one event, always (AUDIT-001).
 
         The write is SHIELDED against cancellation. Without the shield, a cancelled
@@ -219,9 +222,7 @@ class AuditSink:
     def readiness_probe(self) -> bool:
         """AUDIT-010: readiness is false when the sink is unwritable."""
         try:
-            self.write_sync(
-                LifecycleEvent(ts=datetime.now(UTC), kind="ready", detail={})
-            )
+            self.write_sync(LifecycleEvent(ts=datetime.now(UTC), kind="ready", detail={}))
             return True
         except (OSError, AuditFailure):
             return False
@@ -300,7 +301,9 @@ class AuditSink:
             self.path.replace(self._rolled(1))
         self.open()  # resets _segment_started; also prunes what just fell off the end
         self.write_sync(
-            LifecycleEvent(ts=datetime.now(UTC), kind="rotation", detail={"file": self.path.name})
+            LifecycleEvent(
+                ts=datetime.now(UTC), kind="rotation", detail={"file": self.path.name}
+            )
         )
 
     def prune(self) -> None:
@@ -345,7 +348,9 @@ def read_events(path: str | Path) -> Iterator[AuditRecord]:
 
 
 def completeness(path: str | Path, requests_issued: int) -> float:
-    """AUDIT-004: measured, never assumed. A measured 1.0 is evidence; an assumed one is not.
+    """AUDIT-004: measured, never assumed.
+
+    A measured 1.0 is evidence; an assumed one is not.
 
     DISTINCT request ids, and duplicates fail the report. Counting rows made the ratio
     forgeable by the exact bug it exists to detect: ten events for one request and

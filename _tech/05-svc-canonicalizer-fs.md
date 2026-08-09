@@ -38,7 +38,7 @@ def decode_once(raw: str) -> str:
         decoded = urllib.parse.unquote(raw, encoding="utf-8", errors="strict")
     except UnicodeDecodeError:
         raise CanonicalizationDenial(CANON_ENCODING_INVALID)
-    if _PERCENT_HEX.search(decoded):        # re.compile(r"%[0-9A-Fa-f]{2}")
+    if _PERCENT_HEX.search(decoded):  # re.compile(r"%[0-9A-Fa-f]{2}")
         raise CanonicalizationDenial(CANON_ENCODING_INVALID)
     return decoded
 ```
@@ -57,11 +57,11 @@ Two cases, because create operations legitimately target a nonexistent leaf.
 
 ```python
 def resolve_target(root: Path, rel: str, operation: str) -> tuple[Path, bool]:
-    candidate = root / rel                        # rel may be absolute -> handled below
+    candidate = root / rel  # rel may be absolute -> handled below
     if PurePath(rel).is_absolute() or (os.name == "nt" and PureWindowsPath(rel).drive):
         raise CanonicalizationDenial(CANON_OUTSIDE_ROOT)
     if operation in ("create", "overwrite", "append", "rename"):
-        parent = candidate.parent.resolve(strict=True)   # parent MUST exist and resolve
+        parent = candidate.parent.resolve(strict=True)  # parent MUST exist and resolve
         real = parent / candidate.name
         exists = real.exists()
     else:
@@ -84,7 +84,8 @@ def resolve_target(root: Path, rel: str, operation: str) -> tuple[Path, bool]:
 ```python
 if not real.is_relative_to(root_real):
     raise CanonicalizationDenial(
-        CANON_SYMLINK_ESCAPE if _had_symlink(candidate) else CANON_OUTSIDE_ROOT)
+        CANON_SYMLINK_ESCAPE if _had_symlink(candidate) else CANON_OUTSIDE_ROOT
+    )
 ```
 
 `PurePath.is_relative_to` compares **path components**, so `/workspace/pub` does not contain `/workspace/public-secrets` — spec test 11 passes for free. Never use `str.startswith`; that single substitution is the most common path-traversal bug in production gateways.
@@ -103,8 +104,10 @@ Probe once at startup rather than assuming from `os.name`— macOS is usually ca
 def probe_case_sensitivity(root: Path) -> bool:
     p = root / ".case_probe_XYZ"
     p.touch()
-    try:    return not (root / ".case_probe_xyz").exists()
-    finally: p.unlink()
+    try:
+        return not (root / ".case_probe_xyz").exists()
+    finally:
+        p.unlink()
 ```
 
 On a case-**insensitive** filesystem, deny-rule matching must casefold both sides, otherwise `/fixture/Confidential/x` evades a rule written against `confidential`. On a case-sensitive one, do not casefold — that would conflate genuinely distinct files.
@@ -137,7 +140,7 @@ Trailing-dot/space stripping is a genuine bypass: `confidential.` and `confident
 ## 7. Derived attributes
 
 ```python
-operation = TOOL_OPERATIONS[target.tool_name]     # from registry, not inferred (CANON-012)
+operation = TOOL_OPERATIONS[target.tool_name]  # from registry, not inferred (CANON-012)
 if operation in ("create", "overwrite") and exists:
     operation = "overwrite"
 elif operation in ("create", "overwrite"):
@@ -157,7 +160,12 @@ The create/overwrite split depends on `exists`, which is racy by definition — 
 ## 8. Startup self-check (CANON-015)
 
 ```python
-for protected in (cfg.config_path, cfg.registry_path, cfg.audit_path, cfg.policy_bundle_path):
+for protected in (
+    cfg.config_path,
+    cfg.registry_path,
+    cfg.audit_path,
+    cfg.policy_bundle_path,
+):
     for root in roots_real:
         if protected.resolve().is_relative_to(root):
             raise ConfigError(f"{protected} is inside approved root {root}")

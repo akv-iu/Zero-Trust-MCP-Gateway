@@ -84,8 +84,13 @@ async def test_http_request_reaches_the_real_fixture_and_is_audited(env: Path) -
 
             cfg = EdgeConfig(host="127.0.0.1", port=port)
             server = uvicorn.Server(
-                uvicorn.Config(build_app(cfg, handler), host=cfg.host, port=port,
-                               log_level="error", access_log=False)
+                uvicorn.Config(
+                    build_app(cfg, handler),
+                    host=cfg.host,
+                    port=port,
+                    log_level="error",
+                    access_log=False,
+                )
             )
             async with anyio.create_task_group() as tg:
                 tg.start_soon(server.serve)
@@ -101,7 +106,9 @@ async def test_http_request_reaches_the_real_fixture_and_is_audited(env: Path) -
                             "mcp-name": "read_file",
                         },
                         json={
-                            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "tools/call",
                             "params": {
                                 "name": "read_file",
                                 "arguments": {"path": "public/documentation.txt"},
@@ -151,11 +158,17 @@ async def test_edge_rejects_before_the_child_is_touched(env: Path) -> None:
                 await up.call_tool("read_file", {"path": "public/documentation.txt"})
                 return Untrusted({})
 
-            cfg = EdgeConfig(host="127.0.0.1", port=port,
-                             allowed_origins=("http://localhost:3000",))
+            cfg = EdgeConfig(
+                host="127.0.0.1", port=port, allowed_origins=("http://localhost:3000",)
+            )
             server = uvicorn.Server(
-                uvicorn.Config(build_app(cfg, handler), host=cfg.host, port=port,
-                               log_level="error", access_log=False)
+                uvicorn.Config(
+                    build_app(cfg, handler),
+                    host=cfg.host,
+                    port=port,
+                    log_level="error",
+                    access_log=False,
+                )
             )
             async with anyio.create_task_group() as tg:
                 tg.start_soon(server.serve)
@@ -163,9 +176,12 @@ async def test_edge_rejects_before_the_child_is_touched(env: Path) -> None:
                 async with httpx.AsyncClient(timeout=30) as client:
                     bad_origin = await client.post(
                         f"http://127.0.0.1:{port}/mcp",
-                        headers={"origin": "http://evil.test"}, json={},
+                        headers={"origin": "http://evil.test"},
+                        json={},
                     )
-                    wrong_path = await client.post(f"http://127.0.0.1:{port}/nope", json={})
+                    wrong_path = await client.post(
+                        f"http://127.0.0.1:{port}/nope", json={}
+                    )
                     removed_method = await client.get(f"http://127.0.0.1:{port}/mcp")
                 server.should_exit = True
 

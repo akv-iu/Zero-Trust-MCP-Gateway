@@ -13,18 +13,27 @@ A bare ASGI app. **No FastAPI, no routing framework** — there is exactly one p
 
 ```python
 async def app(scope, receive, send):
-    if scope["type"] != "http":                       return await _reject(send, 400)
-    if scope["path"] != cfg.mcp_path:                 return await _reject(send, 404)
-    if scope["method"] in ("GET", "DELETE"):          return await _reject(send, 405)  # 2026-07-28
-    if scope["method"] != "POST":                     return await _reject(send, 405)
-    if not _origin_ok(scope["headers"]):              return await _reject(send, 403)
+    if scope["type"] != "http":
+        return await _reject(send, 400)
+    if scope["path"] != cfg.mcp_path:
+        return await _reject(send, 404)
+    if scope["method"] in ("GET", "DELETE"):
+        return await _reject(send, 405)  # 2026-07-28
+    if scope["method"] != "POST":
+        return await _reject(send, 405)
+    if not _origin_ok(scope["headers"]):
+        return await _reject(send, 403)
 
-    body = await _read_body(receive, cfg.limits.max_message_bytes)   # streaming cap
-    env = RawEnvelope(request_id=uuid4().hex,
-                      received_at_ns=perf_counter_ns(),
-                      body=body,
-                      metadata=[(k.decode("latin-1").lower(), v.decode("latin-1"))
-                                for k, v in scope["headers"]])       # PAIRS, not a dict
+    body = await _read_body(receive, cfg.limits.max_message_bytes)  # streaming cap
+    env = RawEnvelope(
+        request_id=uuid4().hex,
+        received_at_ns=perf_counter_ns(),
+        body=body,
+        metadata=[
+            (k.decode("latin-1").lower(), v.decode("latin-1"))
+            for k, v in scope["headers"]
+        ],
+    )  # PAIRS, not a dict
     ...
 ```
 
@@ -82,11 +91,11 @@ The gateway's own process no longer owns fd 1 for protocol traffic, so the fd ju
 At process start, **before** anything else:
 
 ```python
-_real_stdout = os.fdopen(os.dup(1), "wb", buffering=0)   # hand this to the transport
-os.dup2(2, 1)                                            # fd 1 now points at stderr
-sys.stdout = sys.stderr                                  # anything that prints goes to stderr
+_real_stdout = os.fdopen(os.dup(1), "wb", buffering=0)  # hand this to the transport
+os.dup2(2, 1)  # fd 1 now points at stderr
+sys.stdout = sys.stderr  # anything that prints goes to stderr
 logging.basicConfig(stream=sys.stderr)
-warnings.simplefilter("default")                         # to stderr, not stdout
+warnings.simplefilter("default")  # to stderr, not stdout
 ```
 
 The transport writes to `_real_stdout`; nothing else in the process can reach fd 1. This makes `BRIDGE-001` structural rather than a code-review rule.
@@ -99,8 +108,8 @@ Test it by parsing the entire captured `stdout` of a full suite run as newline-d
 
 ```python
 params = StdioServerParameters(
-    command=cfg.child.executable,        # absolute path, from registry (BRIDGE-007)
-    args=list(cfg.child.args),           # list, never a string (BRIDGE-005)
+    command=cfg.child.executable,  # absolute path, from registry (BRIDGE-007)
+    args=list(cfg.child.args),  # list, never a string (BRIDGE-005)
     env={k: os.environ[k] for k in cfg.child.env_allowlist if k in os.environ},
     cwd=cfg.child.cwd,
 )

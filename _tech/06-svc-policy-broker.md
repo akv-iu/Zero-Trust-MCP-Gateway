@@ -59,13 +59,13 @@ Built from a frozen model, not a hand-assembled dict — so `POLICY-002` is enfo
 ```python
 class PolicyInput(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
-    request: RequestBlock         # id, protocol_version, transport, method
-    principal: PrincipalBlock     # id, auth_method, assurance, roles, environment
-    client: ClientBlock           # id
-    target: TargetBlock           # server_id, tool, schema_fingerprint, registry_risk_tier
-    resource: ResourceBlock       # canonical_path, root, classification, exists
-    arguments: ArgumentsBlock     # arg_hash, operation
-    context: ContextBlock         # policy_revision
+    request: RequestBlock  # id, protocol_version, transport, method
+    principal: PrincipalBlock  # id, auth_method, assurance, roles, environment
+    client: ClientBlock  # id
+    target: TargetBlock  # server_id, tool, schema_fingerprint, registry_risk_tier
+    resource: ResourceBlock  # canonical_path, root, classification, exists
+    arguments: ArgumentsBlock  # arg_hash, operation
+    context: ContextBlock  # policy_revision
 ```
 
 There is no field on any block that can hold a raw argument value, a secret, or free text. Spec test 8 (inspect every dispatched document) then becomes a regression guard rather than the primary defense.
@@ -108,7 +108,10 @@ def validate_result(result: Any, req: CanonicalRequest) -> Decision:
 def clamp(raw: dict) -> tuple[Obligations, bool]:
     t = min(int(raw.get("timeout_ms", cfg.default_timeout_ms)), cfg.max_timeout_ms)
     b = min(int(raw.get("max_response_bytes", cfg.default_bytes)), cfg.max_bytes)
-    return Obligations(timeout_ms=t, max_response_bytes=b), (t, b) != (raw.get(...), raw.get(...))
+    return Obligations(timeout_ms=t, max_response_bytes=b), (t, b) != (
+        raw.get(...),
+        raw.get(...),
+    )
 ```
 
 `min` only — policy may narrow, never widen. When clamping occurs, set `Decision.clamped` and audit `POLICY_OBLIGATION_CLAMPED` alongside the real reason code. The request still proceeds; clamping is not a denial.

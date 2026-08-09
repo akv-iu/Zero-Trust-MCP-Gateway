@@ -49,9 +49,7 @@ def test_damage_demo_production_secret_read(sandbox: Path) -> None:
 
 def test_damage_demo_traversal_escapes_the_public_root(sandbox: Path) -> None:
     """`public/../confidential/...` genuinely escapes. The fixture does not stop it."""
-    out = tools.call(
-        "read_file", {"path": "public/../confidential/fake_salaries.csv"}
-    )
+    out = tools.call("read_file", {"path": "public/../confidential/fake_salaries.csv"})
     assert CANARIES[4] in out
 
 
@@ -71,7 +69,9 @@ def test_damage_demo_destructive_write_and_delete(sandbox: Path) -> None:
 
 def test_damage_demo_symlink_escape(sandbox: Path) -> None:
     if not links_available(sandbox):
-        pytest.skip("symlinks unavailable (Windows without Developer Mode) - REPORT AS SKIPPED")
+        pytest.skip(
+            "symlinks unavailable (Windows without Developer Mode) - REPORT AS SKIPPED"
+        )
     # traps/escape_link -> ../.. , i.e. outside the fixture root entirely.
     outside = sandbox.parent.parent / "outside_marker.txt"
     outside.write_text("OUTSIDE\n", encoding="utf-8")
@@ -90,7 +90,9 @@ def test_fixture_is_still_naive(sandbox: Path) -> None:
     If this ever fails, someone added a containment check to the fixture and every
     gateway security test has silently become vacuous.
     """
-    assert CANARIES[4] in tools.call("read_file", {"path": "public/../confidential/fake_salaries.csv"})
+    assert CANARIES[4] in tools.call(
+        "read_file", {"path": "public/../confidential/fake_salaries.csv"}
+    )
     assert tools.call("read_file", {"path": "./public/./documentation.txt"})
 
 
@@ -106,6 +108,7 @@ def test_sdk_resource_security_is_disabled() -> None:
 def test_no_tool_can_execute_a_command() -> None:
     """FIX-011: no shell, no exec, in any mode, behind any flag."""
     import ast
+
     src = Path(tools.__file__).read_text("utf-8")
     banned = {"subprocess", "os.system", "popen", "pty", "commands"}
     text = src.lower()
@@ -225,8 +228,11 @@ def test_canaries_are_unique_and_present(sandbox: Path) -> None:
     """FIX-002: each canary must appear in exactly one file, so a leak is pinpointable."""
     for canary in CANARIES:
         hits = [
-            p for p in sandbox.rglob("*")
-            if p.is_file() and not p.is_symlink() and canary in p.read_text("utf-8", "replace")
+            p
+            for p in sandbox.rglob("*")
+            if p.is_file()
+            and not p.is_symlink()
+            and canary in p.read_text("utf-8", "replace")
         ]
         assert len(hits) == 1, f"{canary}: {hits}"
 
@@ -300,7 +306,9 @@ def test_declared_schemas_are_closed(sandbox: Path) -> None:
 def test_advertised_is_a_deep_copy() -> None:
     """A caller mutating the listing must not corrupt the fixture's own schemas."""
     tools.advertised("")[0]["inputSchema"]["properties"]["path"]["maxLength"] = 1
-    assert tools.TOOLS["read_file"]["inputSchema"]["properties"]["path"]["maxLength"] == 4096
+    assert (
+        tools.TOOLS["read_file"]["inputSchema"]["properties"]["path"]["maxLength"] == 4096
+    )
 
 
 # ===========================================================================
@@ -333,6 +341,4 @@ def test_weak_isolation_must_be_explicitly_accepted(
 def test_links_manifest_is_complete(sandbox: Path) -> None:
     if not links_available(sandbox):
         pytest.skip("symlinks unavailable - REPORT AS SKIPPED")
-    assert set(LINKS) == {
-        r for r in LINKS if (sandbox / r).is_symlink()
-    }
+    assert set(LINKS) == {r for r in LINKS if (sandbox / r).is_symlink()}

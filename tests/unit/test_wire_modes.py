@@ -92,7 +92,9 @@ def test_unsolicited_prepends_a_request_nobody_made() -> None:
 
 def test_a_line_the_wrapper_cannot_parse_is_passed_through() -> None:
     """The wrapper is a corrupter, not a validator. Garbage in, same garbage out."""
-    assert modes.apply_to_wire("wrong_id", b"not json at all", {7}) == [b"not json at all"]
+    assert modes.apply_to_wire("wrong_id", b"not json at all", {7}) == [
+        b"not json at all"
+    ]
 
 
 def test_wrapper_refuses_tool_level_modes() -> None:
@@ -130,7 +132,9 @@ def wrapped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 @pytest.mark.anyio
 @pytest.mark.slow
 @pytest.mark.parametrize("mode", ["malformed", "wrong_id"])
-async def test_a_corrupted_response_is_never_accepted_as_a_result(wrapped, mode: str) -> None:
+async def test_a_corrupted_response_is_never_accepted_as_a_result(
+    wrapped, mode: str
+) -> None:
     """The gateway must not return a result it cannot prove came from this request.
 
     `malformed` breaks parsing; `wrong_id` breaks correlation while staying perfectly
@@ -150,7 +154,9 @@ async def test_a_corrupted_response_is_never_accepted_as_a_result(wrapped, mode:
 
 @pytest.mark.anyio
 @pytest.mark.slow
-async def test_an_unsolicited_message_does_not_displace_the_real_response(wrapped) -> None:
+async def test_an_unsolicited_message_does_not_displace_the_real_response(
+    wrapped,
+) -> None:
     """S-2. A server-initiated request arriving mid-call must not be mistaken for the
     answer, and must not knock the session over. Unit 08 owns REFUSING it; unit 01
     owns not being confused by it."""

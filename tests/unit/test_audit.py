@@ -26,7 +26,6 @@ from gateway.audit_schema import LifecycleEvent, RequestEvent
 from gateway.errors import (
     AuditFailure,
     CanonicalizationDenial,
-    PolicyDenial,
     ProgrammingError,
     ReasonCode,
     RouteDenial,
@@ -44,7 +43,9 @@ def sink(tmp_path: Path) -> AuditSink:
 
 
 def _lines(sink: AuditSink) -> list[dict]:
-    return [json.loads(ln) for ln in sink.path.read_text("utf-8").splitlines() if ln.strip()]
+    return [
+        json.loads(ln) for ln in sink.path.read_text("utf-8").splitlines() if ln.strip()
+    ]
 
 
 # ===========================================================================
@@ -70,7 +71,7 @@ async def test_double_write_is_a_programming_error(sink: AuditSink) -> None:
 
 
 async def test_early_rejection_still_produces_a_complete_event(sink: AuditSink) -> None:
-    """A stage-2 denial has no tool name. The record must still be valid, not truncated."""
+    """A stage-2 denial has no tool name. The record stays valid, not truncated."""
     b = AuditBuilder("r1")
     b.record_denial(CanonicalizationDenial(ReasonCode.PROTO_HEADER_BODY_METHOD_MISMATCH))
     await b.finalize_and_write(sink)
@@ -319,7 +320,9 @@ def test_rotation_preserves_history(tmp_path: Path) -> None:
     s = AuditSink(tmp_path / "a.jsonl", max_bytes=200, rotate_keep=3)
     s.open()
     for i in range(20):
-        s.write_sync(LifecycleEvent(ts=datetime.now(UTC), kind="startup", detail={"n": str(i)}))
+        s.write_sync(
+            LifecycleEvent(ts=datetime.now(UTC), kind="startup", detail={"n": str(i)})
+        )
     assert (tmp_path / "a.jsonl.1").exists()
     assert list(read_events(tmp_path / "a.jsonl.1"))
 
@@ -366,7 +369,7 @@ def test_a_young_segment_is_left_alone(tmp_path: Path) -> None:
 
 def test_expired_segments_are_deleted(tmp_path: Path) -> None:
     p = tmp_path / "a.jsonl"
-    stale = (tmp_path / "a.jsonl.2")
+    stale = tmp_path / "a.jsonl.2"
     stale.write_text("{}\n", encoding="utf-8")
     ancient = datetime.now(UTC).timestamp() - 40 * 86_400
     os.utime(stale, (ancient, ancient))
@@ -451,7 +454,8 @@ async def test_the_tombstone_carries_no_field_from_the_rejected_event(
 
 
 def test_records_are_newline_delimited_on_every_platform(sink: AuditSink) -> None:
-    """Explicit newline="\\n": without it Windows writes \\r\\n and byte comparisons diverge."""
+    """Explicit newline="\\n": without it Windows writes \\r\\n and byte
+    comparisons diverge across platforms."""
     sink.write_sync(LifecycleEvent(ts=datetime.now(UTC), kind="startup"))
     assert b"\r\n" not in sink.path.read_bytes()
 

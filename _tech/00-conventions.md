@@ -75,53 +75,60 @@ All frozen. `model_config = ConfigDict(frozen=True, extra="forbid")` on every on
 
 ```python
 # gateway/types.py
-type RequestId = str          # uuid4().hex — unguessable, unique; sortability not required
+type RequestId = str  # uuid4().hex — unguessable, unique; sortability not required
 
-class RawEnvelope(BaseModel):          # 01 -> 02.  Never passed beyond 02 (PROTO-006).
+
+class RawEnvelope(BaseModel):  # 01 -> 02.  Never passed beyond 02 (PROTO-006).
     request_id: RequestId
     received_at_ns: int
-    body: bytes                        # undecoded, straight from ASGI
-    metadata: tuple[tuple[str, str], ...]   # header PAIRS, lowercased names — duplicates
-                                            # must stay visible for PROTO-004 (ADR-001)
+    body: bytes  # undecoded, straight from ASGI
+    metadata: tuple[tuple[str, str], ...]  # header PAIRS, lowercased names — duplicates
+    # must stay visible for PROTO-004 (ADR-001)
 
-class CanonicalRequest(BaseModel):     # 02 -> everything. Immutable authority.
+
+class CanonicalRequest(BaseModel):  # 02 -> everything. Immutable authority.
     request_id: RequestId
     protocol_version: str
-    method: str                        # "tools/call" | "tools/list" | handshake methods
+    method: str  # "tools/call" | "tools/list" | handshake methods
     jsonrpc_id: str | int | None
     tool_name: str | None
-    arguments: Mapping[str, Any]       # parsed, not yet canonicalized
-    body_hash: str                     # sha256 of raw body
+    arguments: Mapping[str, Any]  # parsed, not yet canonicalized
+    body_hash: str  # sha256 of raw body
 
-class AuthzContext(BaseModel):         # 03
+
+class AuthzContext(BaseModel):  # 03
     principal: str
     client_id: str
     roles: tuple[str, ...]
-    auth_method: Literal["local_config"]        # v1 enum has ONE value (IDENT-002)
-    assurance: Literal["unverified_local"]      # ditto
-    transport: Literal["streamable_http"]       # client edge; upstream leg is stdio
+    auth_method: Literal["local_config"]  # v1 enum has ONE value (IDENT-002)
+    assurance: Literal["unverified_local"]  # ditto
+    transport: Literal["streamable_http"]  # client edge; upstream leg is stdio
     environment: str
 
-class ResolvedTarget(BaseModel):       # 04
+
+class ResolvedTarget(BaseModel):  # 04
     server_id: str
     tool_name: str
     schema_fingerprint: str
     registry_risk_tier: Literal["R0", "R1", "R2", "R4"]
 
-class DerivedAttributes(BaseModel):    # 05
+
+class DerivedAttributes(BaseModel):  # 05
     canonical_path: str
     root: str
-    operation: Literal["read","create","overwrite","append","rename","delete"]
+    operation: Literal["read", "create", "overwrite", "append", "rename", "delete"]
     classification: str
     exists: bool
     arg_hash: str
     raw_hash: str
 
-class Obligations(BaseModel):          # 06
+
+class Obligations(BaseModel):  # 06
     timeout_ms: int
     max_response_bytes: int
 
-class Decision(BaseModel):             # 06 -> 07.  Carries request_id so ROUTE-001 is checkable.
+
+class Decision(BaseModel):  # 06 -> 07.  Carries request_id so ROUTE-001 is checkable.
     request_id: RequestId
     decision: Literal["allow", "deny"]
     reason_code: str
@@ -130,10 +137,13 @@ class Decision(BaseModel):             # 06 -> 07.  Carries request_id so ROUTE-
     obligations: Obligations
     clamped: bool = False
 
+
 @dataclass(frozen=True)
-class Untrusted[T]:                    # 08 -> client / 12.  RESP-005.
+class Untrusted[T]:  # 08 -> client / 12.  RESP-005.
     value: T
-    def unwrap(self) -> T: return self.value
+
+    def unwrap(self) -> T:
+        return self.value
 ```
 
 `Untrusted` is a wrapper, not a boolean flag, so v1.1 cannot splice tool text into a system prompt without a visible `.unwrap()` in the diff.
@@ -148,8 +158,10 @@ One exception family. One handler. `errors.py`:
 class GatewayDenial(Exception):
     reason_code: ReasonCode
     stage: Stage
-    http_safe_message: str      # what the client sees — never internals (CONV-009)
-    detail: str | None = None   # diagnostic sink only, never client-facing, never audited raw
+    http_safe_message: str  # what the client sees — never internals (CONV-009)
+    detail: str | None = (
+        None  # diagnostic sink only, never client-facing, never audited raw
+    )
 ```
 
 Subclasses by stage — `ProtocolDenial`, `IdentityDenial`, `RegistryDenial`, `CanonicalizationDenial`, `PolicyDenial`, `RouteDenial`, `ResponseDenial` — carrying nothing extra. The subclass exists for `except` targeting in tests, not for behavior.
@@ -169,22 +181,31 @@ async def handle(env: RawEnvelope, deps: Deps) -> Untrusted[dict]:
     audit = AuditBuilder(env.request_id, env.received_at_ns)
     token = current_audit.set(audit)
     try:
-        with audit.stage("protocol"):   req  = protocol.validate(env)
-        with audit.stage("identity"):   ctx  = identity.resolve(req, deps.config)
-        with audit.stage("registry"):   tgt  = await registry.resolve(req, ctx, deps.registry)
-        with audit.stage("canonical"):  drv  = canonicalize.fs.derive(req, tgt, deps.config)
-        with audit.stage("policy"):     dec  = await policy.evaluate(req, ctx, tgt, drv, deps.opa)
+        with audit.stage("protocol"):
+            req = protocol.validate(env)
+        with audit.stage("identity"):
+            ctx = identity.resolve(req, deps.config)
+        with audit.stage("registry"):
+            tgt = await registry.resolve(req, ctx, deps.registry)
+        with audit.stage("canonical"):
+            drv = canonicalize.fs.derive(req, tgt, deps.config)
+        with audit.stage("policy"):
+            dec = await policy.evaluate(req, ctx, tgt, drv, deps.opa)
         if dec.decision != "allow":
             raise PolicyDenial(dec.reason_code)
-        with audit.stage("route"):      raw  = await router.forward(req, dec, deps.upstream)
-        with audit.stage("response"):   out  = response.validate(raw, req, dec.obligations)
+        with audit.stage("route"):
+            raw = await router.forward(req, dec, deps.upstream)
+        with audit.stage("response"):
+            out = response.validate(raw, req, dec.obligations)
         return out
     except GatewayDenial as d:
-        audit.deny(d); raise
+        audit.deny(d)
+        raise
     except Exception as e:
-        audit.internal_error(e); raise GatewayDenial(ReasonCode.INTERNAL_ERROR, ...) from e
+        audit.internal_error(e)
+        raise GatewayDenial(ReasonCode.INTERNAL_ERROR, ...) from e
     finally:
-        await audit.finalize_and_write(deps.audit)   # AUDIT-001: exactly one, always
+        await audit.finalize_and_write(deps.audit)  # AUDIT-001: exactly one, always
         current_audit.reset(token)
 ```
 
@@ -200,11 +221,14 @@ Stage order lives here and nowhere else (`CONV-002`). A new stage is a line here
 
 ```python
 def canonical_json(obj) -> bytes:
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=False, allow_nan=False).encode("utf-8")
+    return json.dumps(
+        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    ).encode("utf-8")
+
 
 def sha256_hex(data: bytes) -> str: ...
-def hash_obj(obj) -> str: return sha256_hex(canonical_json(obj))
+def hash_obj(obj) -> str:
+    return sha256_hex(canonical_json(obj))
 ```
 
 `allow_nan=False` matters: `NaN`/`Infinity` are not JSON and must not silently enter a fingerprint.
@@ -221,8 +245,10 @@ Fingerprints carry a normalization version prefix — `"v1:sha256:abc..."` (`REG
 @contextmanager
 def stage(self, name: str):
     t0 = time.perf_counter_ns()
-    try: yield
-    finally: self.stage_ns[name] = time.perf_counter_ns() - t0
+    try:
+        yield
+    finally:
+        self.stage_ns[name] = time.perf_counter_ns() - t0
 ```
 
 Recorded in nanoseconds, reported in milliseconds by the harness. Wall-clock `ts_start`/`ts_end` are `datetime.now(UTC)` and are for correlation only, never for measurement.
@@ -241,8 +267,9 @@ config/
 
 ```python
 def load(path: Path) -> Config:
-    with path.open("rb") as f: raw = tomllib.load(f)
-    return Config.model_validate(raw)   # extra="forbid" -> unknown key = startup failure
+    with path.open("rb") as f:
+        raw = tomllib.load(f)
+    return Config.model_validate(raw)  # extra="forbid" -> unknown key = startup failure
 ```
 
 Startup order: load config → validate → run self-checks (`CANON-015` gateway paths outside roots, `FIX-006` fixture isolation, audit sink writable) → start OPA client and verify a probe query → spawn child → handshake → **only then** set ready.

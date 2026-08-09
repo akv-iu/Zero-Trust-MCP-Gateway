@@ -34,8 +34,13 @@ def child_cfg(root: Path, oplog: Path, *, mode: str = "", **kw) -> ChildConfig:
         args=("-m", "fixtures.filesystem_server.server"),
         cwd=str(REPO),
         env_allowlist=(
-            "PATH", "PYTHONPATH", "SYSTEMROOT", "FIXTURE_ROOT",
-            "FIXTURE_OPLOG", "FIXTURE_MODE", "FIXTURE_ALLOW_WEAK_ISOLATION",
+            "PATH",
+            "PYTHONPATH",
+            "SYSTEMROOT",
+            "FIXTURE_ROOT",
+            "FIXTURE_OPLOG",
+            "FIXTURE_MODE",
+            "FIXTURE_ALLOW_WEAK_ISOLATION",
         ),
         **kw,
     )
@@ -177,11 +182,15 @@ async def test_upstream_calls_are_serialised(cfg: ChildConfig, tmp_path: Path) -
         async with upstream(cfg) as up:
             async with anyio.create_task_group() as tg:
                 for _ in range(5):
-                    tg.start_soon(up.call_tool, "read_file", {"path": "public/changelog.md"})
+                    tg.start_soon(
+                        up.call_tool, "read_file", {"path": "public/changelog.md"}
+                    )
     assert (tmp_path / "oplog.jsonl").exists(), "no operation reached the fixture"
 
     ops = [
-        ln for ln in (tmp_path / "oplog.jsonl").read_text("utf-8").splitlines() if ln.strip()
+        ln
+        for ln in (tmp_path / "oplog.jsonl").read_text("utf-8").splitlines()
+        if ln.strip()
     ]
     # attempt+end pairs must not interleave: every attempt is immediately followed
     # by its own end record.
@@ -215,7 +224,7 @@ def test_stderr_ring_is_bounded() -> None:
 
     ring: deque[str] = deque(maxlen=4)
     for i in range(100):
-        append_line(ring, "line %d\n" % i)
+        append_line(ring, f"line {i}\n")
     assert len(ring) == 4 and ring[-1] == "line 99"
     append_line(ring, "x" * 5000)  # a child emitting one endless line
     assert all(len(line) <= MAX_STDERR_LINE for line in ring)

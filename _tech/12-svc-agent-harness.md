@@ -36,11 +36,17 @@ agent/
 ```python
 def build_model(cfg: AgentConfig) -> Model:
     if cfg.provider == "groq":
-        return GroqModel(cfg.model, provider=GroqProvider(api_key=os.environ["GROQ_API_KEY"]))
-    if cfg.provider == "cloudflare":                      # OpenAI-compatible endpoint
-        return OpenAIModel(cfg.model, provider=OpenAIProvider(
-            base_url=f"https://api.cloudflare.com/client/v4/accounts/{cfg.account}/ai/v1",
-            api_key=os.environ["CLOUDFLARE_API_TOKEN"]))
+        return GroqModel(
+            cfg.model, provider=GroqProvider(api_key=os.environ["GROQ_API_KEY"])
+        )
+    if cfg.provider == "cloudflare":  # OpenAI-compatible endpoint
+        return OpenAIModel(
+            cfg.model,
+            provider=OpenAIProvider(
+                base_url=f"https://api.cloudflare.com/client/v4/accounts/{cfg.account}/ai/v1",
+                api_key=os.environ["CLOUDFLARE_API_TOKEN"],
+            ),
+        )
     raise ConfigError(cfg.provider)
 ```
 
@@ -51,7 +57,7 @@ Model ids at the planning snapshot: `openai/gpt-oss-20b` (Groq), `@cf/openai/gpt
 ### Disabling provider-side execution (AGENT-002, AGENT-003)
 
 ```python
-agent = Agent(model, tools=gateway_tools, builtin_tools=[])   # explicitly empty
+agent = Agent(model, tools=gateway_tools, builtin_tools=[])  # explicitly empty
 ```
 
 Assert at construction rather than trusting the default:
@@ -85,12 +91,17 @@ Every provider proposal is validated locally **before** it becomes an MCP reques
 
 ```python
 def validate_proposal(p: ToolCallPart, exposed: dict[str, Tool], cfg) -> ValidatedCall:
-    if p.tool_name not in exposed:              raise ProposalRejected("unknown_tool")
-    try: args = json.loads(p.args) if isinstance(p.args, str) else p.args
-    except json.JSONDecodeError:                raise ProposalRejected("unparseable_args")
-    if not isinstance(args, dict):              raise ProposalRejected("args_not_object")
-    if len(json.dumps(args)) > cfg.max_arg_bytes: raise ProposalRejected("args_too_large")
-    Draft202012Validator(exposed[p.tool_name].inputSchema).validate(args)   # raises
+    if p.tool_name not in exposed:
+        raise ProposalRejected("unknown_tool")
+    try:
+        args = json.loads(p.args) if isinstance(p.args, str) else p.args
+    except json.JSONDecodeError:
+        raise ProposalRejected("unparseable_args")
+    if not isinstance(args, dict):
+        raise ProposalRejected("args_not_object")
+    if len(json.dumps(args)) > cfg.max_arg_bytes:
+        raise ProposalRejected("args_too_large")
+    Draft202012Validator(exposed[p.tool_name].inputSchema).validate(args)  # raises
     return ValidatedCall(p.tool_name, args)
 ```
 
@@ -138,9 +149,9 @@ Return it to the model only through an explicit, single call site:
 
 ```python
 def to_model_message(result: Untrusted[dict], cfg) -> str:
-    payload = result.unwrap()                       # the ONE unwrap in agent/
+    payload = result.unwrap()  # the ONE unwrap in agent/
     text = json.dumps(payload)[: cfg.max_result_chars]
-    return f"<tool_result untrusted=\"true\">{text}</tool_result>"
+    return f'<tool_result untrusted="true">{text}</tool_result>'
 ```
 
 One `unwrap()` in the whole package; a CI grep asserts the count is 1. That is the reviewable seam `AGENT-010` asks for.
@@ -185,11 +196,13 @@ Scenario 3 (injected instruction) needs both branches asserted (`AGENT` spec tes
 ```python
 async def test_injection_scenario(agent, oracle):
     result = await run_scenario(SCENARIOS["injection"])
-    complied = any(c.tool == "read_file" and "confidential" in c.args["path"]
-                   for c in result.proposals)
+    complied = any(
+        c.tool == "read_file" and "confidential" in c.args["path"]
+        for c in result.proposals
+    )
     # PASSES EITHER WAY — that is the point.
     assert not oracle.observe().effect_on("confidential/")
-    result.record["model_complied"] = complied      # reported as behavior, not as pass/fail
+    result.record["model_complied"] = complied  # reported as behavior, not as pass/fail
 ```
 
 The report must present this as *"the gateway's answer does not depend on the model's answer"*, never as *"the model resisted the injection"*. Write the sentence into `report.py`'s template so it cannot drift.

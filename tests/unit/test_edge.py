@@ -29,9 +29,13 @@ async def echo(env: RawEnvelope) -> Untrusted[dict]:
     mode to production — CONV-001 forbids an undocumented bypass, and a mode you can
     forget to switch off is exactly that.
     """
-    return Untrusted({"seen": env.body.decode("utf-8", "replace"),
-                      "headers": list(env.metadata),
-                      "request_id": env.request_id})
+    return Untrusted(
+        {
+            "seen": env.body.decode("utf-8", "replace"),
+            "headers": list(env.metadata),
+            "request_id": env.request_id,
+        }
+    )
 
 
 class Capture:
@@ -124,12 +128,28 @@ async def test_chunked_body_is_reassembled() -> None:
     assert json.loads(cap.json()["seen"])
 
 
-async def test_notification_returns_202_with_no_body() -> None:
-    async def none_handler(env: RawEnvelope) -> Untrusted[dict]:
-        return Untrusted(None)  # type: ignore[arg-type]
+async def test_there_is_no_notification_path_to_answer_with_202() -> None:
+    """The edge used to carry a 202 branch for a handler returning no payload.
 
-    cap = await call(build_app(CFG, none_handler), scope(), receiver())
-    assert cap.status == 202 and cap.body == b""
+    Nothing could reach it. `Handler` returns `Untrusted[JsonObject]`, and unit 02
+    rejects a body with no `id` as PROTO_JSONRPC_INVALID — v1 authorizes and answers
+    every request, so a fire-and-forget notification is not a shape it serves. The
+    old test had to pass `Untrusted(None)` behind a `type: ignore` to get there,
+    which is the tell: a branch only reachable by lying to the type checker.
+
+    Pyright found it once the handler signature was made precise. Asserting the
+    absence keeps it from growing back as a convenience.
+    """
+    import inspect
+
+    from gateway import edge
+
+    source = inspect.getsource(edge.Edge._dispatch)
+    # Match the call, not the bare digits: the spec revision "2026-07-28" is in a
+    # comment two lines up, and the first version of this test matched that instead.
+    assert "_send(send, 202" not in source, (
+        "a notification path reappeared without a spec change"
+    )
 
 
 # ===========================================================================
@@ -178,7 +198,7 @@ async def test_removed_methods_return_405(method: str) -> None:
 
 
 async def test_unknown_path_returns_404_with_a_modern_jsonrpc_error() -> None:
-    """404 + -32601 is what lets a client distinguish a modern server from legacy HTTP+SSE."""
+    """404 + -32601 lets a client distinguish a modern server from legacy HTTP+SSE."""
     cap = await call(build_app(CFG, echo), scope(path="/nope"), receiver())
     assert cap.status == 404
     assert cap.json()["error"]["code"] == -32601
@@ -186,7 +206,9 @@ async def test_unknown_path_returns_404_with_a_modern_jsonrpc_error() -> None:
 
 async def test_unapproved_origin_is_rejected_with_403() -> None:
     cap = await call(
-        build_app(CFG, echo), scope(headers=[(b"origin", b"http://evil.test")]), receiver()
+        build_app(CFG, echo),
+        scope(headers=[(b"origin", b"http://evil.test")]),
+        receiver(),
     )
     assert cap.status == 403
     assert cap.json()["error"]["data"]["reason_code"] == "PROTO_ORIGIN_REJECTED"
@@ -259,6 +281,7 @@ async def test_handler_denial_is_mapped_to_the_spec_wire_shape() -> None:
 
 async def test_unexpected_exception_becomes_a_controlled_error() -> None:
     """A traceback must never reach the client, and a defect must never allow."""
+
     async def boom(env: RawEnvelope) -> Untrusted[dict]:
         raise ValueError("internal detail /etc/shadow")
 
@@ -269,6 +292,7 @@ async def test_unexpected_exception_becomes_a_controlled_error() -> None:
 
 async def test_error_bodies_never_disclose_internals() -> None:
     for code in (ReasonCode.CANON_OUTSIDE_ROOT, ReasonCode.POLICY_PATH_NOT_PERMITTED):
+
         async def denier(env: RawEnvelope, c: ReasonCode = code) -> Untrusted[dict]:
             raise GatewayDenial(c, detail="/fixture/confidential/salaries.csv")
 
@@ -324,9 +348,7 @@ async def test_disconnect_during_the_handler_is_detected() -> None:
         await anyio.sleep(5)  # still working when the client goes away
         return Untrusted({"never": "returned"})
 
-    cap = await call(
-        build_app(CFG, slow), scope(), receiver(disconnect_after_s=0.05)
-    )
+    cap = await call(build_app(CFG, slow), scope(), receiver(disconnect_after_s=0.05))
     assert started.is_set(), "the handler never ran"
     assert cap.json()["error"]["data"]["reason_code"] == "ROUTE_CANCELLED"
 

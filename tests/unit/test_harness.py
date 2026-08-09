@@ -10,11 +10,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from fixtures.build_tree import build, tree_hash
 from fixtures.manifest import CANARIES
 from harness import scenario as scen
-from harness.clients import ALLOW_DIRECT_ENV, CallOutcome, Client, DirectClient
+from harness.clients import ALLOW_DIRECT_ENV, CallOutcome, DirectClient
 from harness.oracle import Observation, Oracle, assert_serialised
 from harness.runner import CorpusReport, Verdict, run, run_corpus, score
 
@@ -61,24 +62,46 @@ def test_control_character_placeholders_expand() -> None:
 def test_corpus_files_contain_no_literal_control_bytes() -> None:
     for f in scen.CORPUS_DIR.glob("*.toml"):
         assert b"\x00" not in f.read_bytes(), f
+
+
 def test_missing_expected_reason_is_rejected() -> None:
     """HARN-003: 'denied for some reason' is not a passing test."""
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         scen.Scenario.model_validate(
-            {"id": "x", "class": "malicious", "layer": "security", "principal": "p",
-             "tool": "read_file", "arguments": {}, "expected_decision": "deny",
-             "expected_side_effect": "none", "risk_tier": "R4", "notes": "n"}
+            {
+                "id": "x",
+                "class": "malicious",
+                "layer": "security",
+                "principal": "p",
+                "tool": "read_file",
+                "arguments": {},
+                "expected_decision": "deny",
+                "expected_side_effect": "none",
+                "risk_tier": "R4",
+                "notes": "n",
+            }
         )
 
 
 def test_incoherent_scenarios_are_rejected_at_load() -> None:
-    base = {"id": "x", "class": "malicious", "layer": "security", "principal": "p",
-            "tool": "read_file", "arguments": {}, "expected_reason": "R",
-            "risk_tier": "R4", "notes": "n"}
+    base = {
+        "id": "x",
+        "class": "malicious",
+        "layer": "security",
+        "principal": "p",
+        "tool": "read_file",
+        "arguments": {},
+        "expected_reason": "R",
+        "risk_tier": "R4",
+        "notes": "n",
+    }
     with pytest.raises(Exception, match="cannot expect a side effect"):
         scen.Scenario.model_validate(
-            {**base, "expected_decision": "deny",
-             "expected_side_effect": {"op": "read", "path_contains": "x"}}
+            {
+                **base,
+                "expected_decision": "deny",
+                "expected_side_effect": {"op": "read", "path_contains": "x"},
+            }
         )
     with pytest.raises(Exception, match="cannot expect allow"):
         scen.Scenario.model_validate(
@@ -129,7 +152,9 @@ def test_oracle_sees_nothing_when_nothing_happens(sandbox: Path, oracle: Oracle)
     assert oracle.observe().any_effect is False
 
 
-def test_oracle_window_isolates_consecutive_scenarios(sandbox: Path, oracle: Oracle) -> None:
+def test_oracle_window_isolates_consecutive_scenarios(
+    sandbox: Path, oracle: Oracle
+) -> None:
     from fixtures.filesystem_server import tools
 
     tools.call("read_file", {"path": "public/documentation.txt"})  # previous scenario
@@ -183,17 +208,28 @@ def test_upstream_error_is_not_a_denial(sandbox: Path) -> None:
 
 
 def _sc(**kw: object) -> scen.Scenario:
-    base = {"id": "t", "class": "malicious", "layer": "security", "principal": "p",
-            "tool": "read_file", "arguments": {"path": "x"}, "expected_decision": "deny",
-            "expected_reason": "CANON_OUTSIDE_ROOT", "expected_side_effect": "none",
-            "risk_tier": "R4", "notes": "n"}
+    base = {
+        "id": "t",
+        "class": "malicious",
+        "layer": "security",
+        "principal": "p",
+        "tool": "read_file",
+        "arguments": {"path": "x"},
+        "expected_decision": "deny",
+        "expected_reason": "CANON_OUTSIDE_ROOT",
+        "expected_side_effect": "none",
+        "risk_tier": "R4",
+        "notes": "n",
+    }
     return scen.Scenario.model_validate({**base, **kw})
 
 
 def _obs(*, effect: bool = False, changed: bool = False) -> Observation:
     from harness.oracle import Effect
 
-    ops = (Effect("read", "confidential/x", "/abs/confidential/x", "ok"),) if effect else ()
+    ops = (
+        (Effect("read", "confidential/x", "/abs/confidential/x", "ok"),) if effect else ()
+    )
     return Observation(ops=ops, tree_before="a", tree_after="b" if changed else "a")
 
 
@@ -211,13 +247,17 @@ def test_wrong_reason_code_fails_even_though_it_denied() -> None:
 
 def test_prohibited_effect_is_CRITICAL_regardless_of_decision() -> None:
     """HARN-007: you cannot un-leak a file. The effect outranks every other finding."""
-    r = score(_sc(), CallOutcome("deny", "CANON_OUTSIDE_ROOT"), _obs(effect=True), "protected")
+    r = score(
+        _sc(), CallOutcome("deny", "CANON_OUTSIDE_ROOT"), _obs(effect=True), "protected"
+    )
     assert r.verdict is Verdict.CRITICAL
 
 
 def test_a_lying_gateway_is_flagged_specifically() -> None:
     """Claimed a denial AND performed the operation: the worst outcome available."""
-    r = score(_sc(), CallOutcome("deny", "CANON_OUTSIDE_ROOT"), _obs(effect=True), "protected")
+    r = score(
+        _sc(), CallOutcome("deny", "CANON_OUTSIDE_ROOT"), _obs(effect=True), "protected"
+    )
     assert r.is_lying_gateway is True
     ok = score(_sc(), CallOutcome("allow"), _obs(effect=True), "direct")
     assert ok.verdict is Verdict.CRITICAL and ok.is_lying_gateway is False
@@ -225,7 +265,9 @@ def test_a_lying_gateway_is_flagged_specifically() -> None:
 
 def test_state_change_with_no_logged_operation_is_CRITICAL() -> None:
     """The fixture failed to log something. Unprovable is not passable."""
-    r = score(_sc(), CallOutcome("deny", "CANON_OUTSIDE_ROOT"), _obs(changed=True), "protected")
+    r = score(
+        _sc(), CallOutcome("deny", "CANON_OUTSIDE_ROOT"), _obs(changed=True), "protected"
+    )
     assert r.verdict is Verdict.CRITICAL
 
 
@@ -234,7 +276,9 @@ def test_incomplete_operation_is_INDETERMINATE() -> None:
     from harness.oracle import Effect
 
     obs = Observation(
-        ops=(), tree_before="a", tree_after="a",
+        ops=(),
+        tree_before="a",
+        tree_after="a",
         attempted_only=(Effect("read", "x", "/abs/x", "attempted"),),
     )
     r = score(_sc(), CallOutcome("deny", "CANON_OUTSIDE_ROOT"), obs, "protected")
@@ -243,9 +287,14 @@ def test_incomplete_operation_is_INDETERMINATE() -> None:
 
 def test_allow_whose_effect_never_happened_is_FALSE_SUCCESS() -> None:
     """HARN-008 / REQ-OUT-005: a non-occurring operation must not report success."""
-    s = _sc(**{"class": "legitimate", "expected_decision": "allow",
-               "expected_reason": "POLICY_SCOPED_READ",
-               "expected_side_effect": {"op": "read", "path_contains": "public/doc"}})
+    s = _sc(
+        **{
+            "class": "legitimate",
+            "expected_decision": "allow",
+            "expected_reason": "POLICY_SCOPED_READ",
+            "expected_side_effect": {"op": "read", "path_contains": "public/doc"},
+        }
+    )
     r = score(s, CallOutcome("allow", "POLICY_SCOPED_READ"), _obs(), "protected")
     assert r.verdict is Verdict.FALSE_SUCCESS
 
@@ -253,14 +302,23 @@ def test_allow_whose_effect_never_happened_is_FALSE_SUCCESS() -> None:
 def test_allow_with_the_expected_effect_passes() -> None:
     from harness.oracle import Effect
 
-    s = _sc(**{"class": "legitimate", "expected_decision": "allow",
-               "expected_reason": "POLICY_SCOPED_READ",
-               "expected_side_effect": {"op": "read", "path_contains": "public/doc"}})
+    s = _sc(
+        **{
+            "class": "legitimate",
+            "expected_decision": "allow",
+            "expected_reason": "POLICY_SCOPED_READ",
+            "expected_side_effect": {"op": "read", "path_contains": "public/doc"},
+        }
+    )
     obs = Observation(
         ops=(Effect("read", "public/doc.txt", "/abs/public/doc.txt", "ok"),),
-        tree_before="a", tree_after="a",
+        tree_before="a",
+        tree_after="a",
     )
-    assert score(s, CallOutcome("allow", "POLICY_SCOPED_READ"), obs, "protected").verdict is Verdict.PASS
+    assert (
+        score(s, CallOutcome("allow", "POLICY_SCOPED_READ"), obs, "protected").verdict
+        is Verdict.PASS
+    )
 
 
 # ===========================================================================
@@ -290,9 +348,9 @@ def test_direct_mode_baseline(sandbox: Path, oracle: Oracle) -> None:
 
     assert report.count(Verdict.PASS) == 0, "nothing is enforcing; a PASS is impossible"
     assert report.count(Verdict.CRITICAL) >= 3, report.summary()
-    assert all(
-        r.verdict in (Verdict.CRITICAL, Verdict.FAIL) for r in graded
-    ), [(r.scenario_id, r.verdict, r.detail) for r in graded]
+    assert all(r.verdict in (Verdict.CRITICAL, Verdict.FAIL) for r in graded), [
+        (r.scenario_id, r.verdict, r.detail) for r in graded
+    ]
 
 
 def test_encoded_attacks_do_not_land_on_a_non_decoding_fixture(
@@ -314,12 +372,15 @@ def test_direct_mode_legitimate_scenarios_succeed(sandbox: Path, oracle: Oracle)
     """The false-positive control: permitted work must work even unprotected."""
     report = run_corpus(scen.load().legitimate(), DirectClient(), oracle, root=sandbox)
     assert report.count(Verdict.PASS) == len(report.results), [
-        (r.scenario_id, r.verdict, r.detail) for r in report.results
+        (r.scenario_id, r.verdict, r.detail)
+        for r in report.results
         if r.verdict is not Verdict.PASS
     ]
 
 
-def test_corpus_run_resets_and_verifies_the_fixture(sandbox: Path, oracle: Oracle) -> None:
+def test_corpus_run_resets_and_verifies_the_fixture(
+    sandbox: Path, oracle: Oracle
+) -> None:
     """FIX-009: a corpus that depends on scenario ordering is not reproducible."""
     before = tree_hash(sandbox)
     run_corpus(scen.load().malicious(), DirectClient(), oracle, root=sandbox)
@@ -337,7 +398,7 @@ def test_report_counts_prohibited_effects_even_when_zero() -> None:
 # ===========================================================================
 
 
-class _StubEnforcer:
+class StubEnforcer:
     """A minimal stand-in for the gateway, so the harness can be validated NOW.
 
     Replaced by ProtectedClient when unit 01 lands. Its only job here is to be
@@ -356,7 +417,9 @@ class _StubEnforcer:
         if self.containment_enabled and not path.startswith("public/"):
             return CallOutcome("deny", "CANON_OUTSIDE_ROOT")  # never touches the fixture
         try:
-            return CallOutcome("allow", "POLICY_SCOPED_READ", result=tools.call(tool, arguments))
+            return CallOutcome(
+                "allow", "POLICY_SCOPED_READ", result=tools.call(tool, arguments)
+            )
         except Exception as e:  # noqa: BLE001
             return CallOutcome("allow", "POLICY_SCOPED_READ", error=str(e))
 
@@ -365,15 +428,19 @@ def test_harness_reports_clean_against_a_working_enforcer(
     sandbox: Path, oracle: Oracle
 ) -> None:
     scenarios = tuple(
-        s for s in scen.load().malicious() if not s.arguments.get("path", "").startswith("public/")
+        s
+        for s in scen.load().malicious()
+        if not s.arguments.get("path", "").startswith("public/")
     )
-    report = run_corpus(scenarios, _StubEnforcer(), oracle, root=sandbox)
+    report = run_corpus(scenarios, StubEnforcer(), oracle, root=sandbox)
     assert report.prohibited_effects == 0, [
         (r.scenario_id, r.detail) for r in report.results if r.verdict is Verdict.CRITICAL
     ]
 
 
-def test_harness_DETECTS_a_deliberately_broken_enforcer(sandbox: Path, oracle: Oracle) -> None:
+def test_harness_DETECTS_a_deliberately_broken_enforcer(
+    sandbox: Path, oracle: Oracle
+) -> None:
     """THE NEGATIVE CONTROL.
 
     Disable the enforcer's containment check and the harness MUST scream. A harness
@@ -383,7 +450,7 @@ def test_harness_DETECTS_a_deliberately_broken_enforcer(sandbox: Path, oracle: O
     Run this after every merge. If it ever passes silently, stop and fix the oracle
     before trusting a single result.
     """
-    broken = _StubEnforcer(containment_enabled=False)
+    broken = StubEnforcer(containment_enabled=False)
     report = run_corpus(scen.load().malicious(), broken, oracle, root=sandbox)
 
     assert report.prohibited_effects > 0, (
@@ -396,7 +463,10 @@ def test_harness_DETECTS_a_deliberately_broken_enforcer(sandbox: Path, oracle: O
 def test_negative_control_pinpoints_the_leak(sandbox: Path, oracle: Oracle) -> None:
     """Not just 'something broke' — which scenario, and what was touched."""
     report = run_corpus(
-        scen.load().malicious(), _StubEnforcer(containment_enabled=False), oracle, root=sandbox
+        scen.load().malicious(),
+        StubEnforcer(containment_enabled=False),
+        oracle,
+        root=sandbox,
     )
     critical = [r for r in report.results if r.verdict is Verdict.CRITICAL]
     assert any("confidential" in " ".join(r.observed_ops) for r in critical)

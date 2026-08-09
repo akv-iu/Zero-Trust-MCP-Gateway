@@ -30,9 +30,11 @@ Where correlation is checked depends on what the SDK gives you:
 
 ```python
 async def _on_unsolicited(message) -> None:
-    audit_event("unsolicited_upstream_message",
-                reason_code=ReasonCode.RESP_UNSOLICITED,
-                method=getattr(message, "method", None))
+    audit_event(
+        "unsolicited_upstream_message",
+        reason_code=ReasonCode.RESP_UNSOLICITED,
+        method=getattr(message, "method", None),
+    )
     # dropped — never relayed to the client
 ```
 
@@ -82,9 +84,13 @@ assert canonical_json(out.unwrap()["content"]) == canonical_json(fixture_returne
 @dataclass(frozen=True)
 class Untrusted[T]:
     value: T
-    def unwrap(self) -> T: return self.value
+
+    def unwrap(self) -> T:
+        return self.value
+
     def __str__(self) -> str:
         raise TypeError("Untrusted content must be explicitly unwrapped")
+
     __repr__ = __str__
 ```
 
@@ -100,9 +106,11 @@ Do not make `Untrusted` a pydantic model — the dataclass is cheaper and pydant
 
 ```python
 def to_jsonrpc_error(d: GatewayDenial) -> dict:
-    return {"code": _JSONRPC_CODE[d.stage],
-            "message": d.http_safe_message,          # from a static per-code table
-            "data": {"reason_code": d.reason_code, "request_id": current_request_id()}}
+    return {
+        "code": _JSONRPC_CODE[d.stage],
+        "message": d.http_safe_message,  # from a static per-code table
+        "data": {"reason_code": d.reason_code, "request_id": current_request_id()},
+    }
 ```
 
 `http_safe_message` comes from a **static table keyed by reason code**, never from an exception's `str()`, never from formatted internals. `detail` never leaves the process.

@@ -20,7 +20,7 @@ from gateway.audit import AuditBuilder, AuditSink
 from gateway.config import Config
 from gateway.context import current_audit
 from gateway.errors import GatewayDenial, PolicyDenial, ReasonCode, Stage
-from gateway.types import RawEnvelope, Untrusted
+from gateway.types import JsonObject, RawEnvelope, Untrusted
 
 
 @dataclass(frozen=True)
@@ -34,13 +34,14 @@ class Deps:
     audit: AuditSink  # unit 09
 
 
-async def handle(env: RawEnvelope, deps: Deps) -> Untrusted[dict]:
+async def handle(env: RawEnvelope, deps: Deps) -> Untrusted[JsonObject]:
     """Run one request through the lifecycle. Exactly one audit event, always."""
     builder = AuditBuilder(env.request_id)
     token = current_audit.set(builder)
     try:
         with builder.stage(Stage.PROTOCOL):
             req = protocol.validate(env, deps.config.protocol)
+        builder.set(**protocol.audit_fields(req))
         with builder.stage(Stage.IDENTITY):
             ctx = identity.resolve(req, deps.config.identity)
         with builder.stage(Stage.REGISTRY):

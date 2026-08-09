@@ -8,7 +8,7 @@ WAVE-0 FILE — shared spine. Parallel agents MUST NOT edit this.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 
 from gateway.errors import Stage
@@ -24,7 +24,7 @@ class StageTimer:
         self._started_ns = time.perf_counter_ns()
 
     @contextmanager
-    def stage(self, name: Stage | str) -> Iterator[None]:
+    def stage(self, name: Stage | str) -> Generator[None]:
         key = name.value if isinstance(name, Stage) else name
         t0 = time.perf_counter_ns()
         try:

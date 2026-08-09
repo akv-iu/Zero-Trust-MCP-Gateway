@@ -71,7 +71,9 @@ def self_check(root: Path) -> Tier:
 
     escapes = _reachable()
     if not escapes:
-        return "strong" if os.environ.get("FIXTURE_ISOLATION_TIER") == "strong" else "medium"
+        return (
+            "strong" if os.environ.get("FIXTURE_ISOLATION_TIER") == "strong" else "medium"
+        )
 
     if os.environ.get("FIXTURE_ALLOW_WEAK_ISOLATION") != "1":
         raise SystemExit(

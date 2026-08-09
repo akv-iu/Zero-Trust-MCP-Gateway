@@ -92,9 +92,7 @@ class Oracle:
             tree_before=self._tree_before,
             tree_after=tree_hash(self.root),
             attempted_only=tuple(
-                _effect(o)
-                for o in attempted
-                if o["seq"] not in {e["seq"] for e in ended}
+                _effect(o) for o in attempted if o["seq"] not in {e["seq"] for e in ended}
             ),
         )
 
@@ -114,5 +112,6 @@ def assert_serialised(max_concurrent: int) -> None:
         raise RuntimeError(
             "oracle correlation assumes one in-flight upstream call; "
             f"max_concurrent_requests={max_concurrent}. Security scenarios must run "
-            "with concurrency 1 (performance scenarios assert no side effects and are exempt)."
+            "with concurrency 1 (performance scenarios assert no side effects "
+            "and are exempt)."
         )

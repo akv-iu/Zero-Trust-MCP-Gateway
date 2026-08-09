@@ -91,8 +91,11 @@ def main() -> None:
     pidfile = os.environ.get("FIXTURE_PIDFILE")
     if pidfile:
         Path(pidfile).write_text(str(os.getpid()), encoding="utf-8")
-    print(f"filesystem-fixture: pid={os.getpid()} root={root} "
-          f"isolation={tier} mode={modes.current()!r}", file=sys.stderr)
+    print(
+        f"filesystem-fixture: pid={os.getpid()} root={root} "
+        f"isolation={tier} mode={modes.current()!r}",
+        file=sys.stderr,
+    )
     build_server().run(transport="stdio")
 
 

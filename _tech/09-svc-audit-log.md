@@ -10,18 +10,19 @@
 The spec forbids passing a mutable dict between stages. The pattern that satisfies it:
 
 ```python
-class AuditBuilder:                      # mutable, per-request, typed slots
+class AuditBuilder:  # mutable, per-request, typed slots
     __slots__ = ("request_id", "received_at_ns", "_fields", "_stage_ns", "_sealed")
 
-    def set(self, **kw) -> None:         # only keys present in AuditEvent are accepted
+    def set(self, **kw) -> None:  # only keys present in AuditEvent are accepted
         unknown = kw.keys() - AuditEvent.model_fields.keys()
-        if unknown: raise ProgrammingError(f"unknown audit fields: {unknown}")
+        if unknown:
+            raise ProgrammingError(f"unknown audit fields: {unknown}")
         self._fields.update(kw)
 
     @contextmanager
-    def stage(self, name: str): ...      # TECH-00 §7
+    def stage(self, name: str): ...  # TECH-00 §7
 
-    def finalize(self) -> AuditEvent:    # validates -> frozen
+    def finalize(self) -> AuditEvent:  # validates -> frozen
         return AuditEvent(request_id=..., stage_latency_ms=..., **self._fields)
 ```
 
@@ -64,31 +65,43 @@ class RequestEvent(BaseModel):
     schema_version: Literal[1]
     event_type: Literal["request"]
     request_id: str
-    ts_start: datetime; ts_end: datetime
+    ts_start: datetime
+    ts_end: datetime
     transport: Literal["stdio"]
-    mcp_method: str | None; mcp_protocol_version: str | None
+    mcp_method: str | None
+    mcp_protocol_version: str | None
     principal: str | None
     auth_method: Literal["local_config"] | None
     assurance: Literal["unverified_local"] | None
     client_id: str | None
-    server_id: str | None; tool_name: str | None; schema_fingerprint: str | None
-    canonical_resource: str | None; arg_hash: str | None; raw_hash: str | None
-    decision: Literal["allow","deny"] | None
+    server_id: str | None
+    tool_name: str | None
+    schema_fingerprint: str | None
+    canonical_resource: str | None
+    arg_hash: str | None
+    raw_hash: str | None
+    decision: Literal["allow", "deny"] | None
     reason_code: str | None
-    risk_tier: Literal["R0","R1","R2","R4"] | None
+    risk_tier: Literal["R0", "R1", "R2", "R4"] | None
     policy_revision: str | None
-    obligations: dict[str, int] | None      # as ENFORCED (ROUTE-007)
+    obligations: dict[str, int] | None  # as ENFORCED (ROUTE-007)
     obligations_clamped: bool = False
-    upstream_status: str | None; upstream_latency_ms: float | None
+    upstream_status: str | None
+    upstream_latency_ms: float | None
     response_bytes: int | None
     stage_latency_ms: dict[str, float]
-    outcome: Literal["allowed","denied","error","cancelled","timeout"]
+    outcome: Literal["allowed", "denied", "error", "cancelled", "timeout"]
 
-class DriftEvent(BaseModel): ...      # event_type: "drift"
+
+class DriftEvent(BaseModel): ...  # event_type: "drift"
+
+
 class LifecycleEvent(BaseModel): ...  # event_type: "startup" | "shutdown" | "policy_load"
 
-AuditRecord = Annotated[RequestEvent | DriftEvent | LifecycleEvent,
-                        Field(discriminator="event_type")]
+
+AuditRecord = Annotated[
+    RequestEvent | DriftEvent | LifecycleEvent, Field(discriminator="event_type")
+]
 ```
 
 Every request-stage field is `| None` because a request rejected at stage 2 has no `tool_name` — the event must still be **complete and valid** (`AUDIT-001`), not truncated. `outcome` and `schema_version` are the only non-optional fields, and `outcome`'s `Literal` makes `AUDIT-002` unrepresentable-otherwise.
@@ -110,9 +123,11 @@ class JsonlSink:
     def _write_sync(self, line: str) -> None:
         self._fh.write(line)
         self._fh.flush()
-        if self.durable: os.fsync(self._fh.fileno())
+        if self.durable:
+            os.fsync(self._fh.fileno())
         self._bytes += len(line)
-        if self._bytes > self.max_bytes: self._rotate()
+        if self._bytes > self.max_bytes:
+            self._rotate()
 ```
 
 - `model_dump_json` handles all escaping, so `AUDIT-014` (log injection) is satisfied by the serializer — a newline inside a value becomes `\n`, never a record boundary. Never build the line with string formatting.
@@ -163,8 +178,10 @@ The harness reads this file directly — there is no query API (`jq` is the admi
 ```python
 def read_events(path: Path) -> Iterator[AuditRecord]:
     for i, line in enumerate(path.read_text("utf-8").splitlines(), 1):
-        try: yield TypeAdapter(AuditRecord).validate_json(line)
-        except ValidationError as e: raise CorruptAuditLog(f"line {i}") from e
+        try:
+            yield TypeAdapter(AuditRecord).validate_json(line)
+        except ValidationError as e:
+            raise CorruptAuditLog(f"line {i}") from e
 ```
 
 Strict on parse — a corrupt line fails the report rather than being skipped (`AUDIT-013` reasoning). Mixed `schema_version` values across a run also fail (spec test 12).

@@ -47,21 +47,34 @@ def main() -> int:
     print(f"{DIM}No gateway is involved. Everything below is what an unprotected")
     print(f"MCP client can do to the protected system today.{OFF}\n")
 
-    demos: list[tuple[str, str, dict]] = [
-        ("Read confidential salary data", "read_file",
-         {"path": "confidential/fake_salaries.csv"}),
-        ("Read a production secret", "read_file",
-         {"path": "production/fake_config.env"}),
-        ("Escape the public root by traversal", "read_file",
-         {"path": "public/../confidential/fake_customer_list.csv"}),
-        ("Read a decoy SSH private key", "read_file",
-         {"path": "decoys/fake_ssh/id_rsa"}),
-        ("Read decoy AWS credentials", "read_file",
-         {"path": "decoys/fake_aws/credentials"}),
-        ("Overwrite the production config", "write_file",
-         {"path": "production/fake_config.env", "content": "OWNED_BY_DEMO\n"}),
-        ("Delete confidential data", "delete_file",
-         {"path": "confidential/fake_salaries.csv"}),
+    demos: list[tuple[str, str, dict[str, str]]] = [
+        (
+            "Read confidential salary data",
+            "read_file",
+            {"path": "confidential/fake_salaries.csv"},
+        ),
+        ("Read a production secret", "read_file", {"path": "production/fake_config.env"}),
+        (
+            "Escape the public root by traversal",
+            "read_file",
+            {"path": "public/../confidential/fake_customer_list.csv"},
+        ),
+        ("Read a decoy SSH private key", "read_file", {"path": "decoys/fake_ssh/id_rsa"}),
+        (
+            "Read decoy AWS credentials",
+            "read_file",
+            {"path": "decoys/fake_aws/credentials"},
+        ),
+        (
+            "Overwrite the production config",
+            "write_file",
+            {"path": "production/fake_config.env", "content": "OWNED_BY_DEMO\n"},
+        ),
+        (
+            "Delete confidential data",
+            "delete_file",
+            {"path": "confidential/fake_salaries.csv"},
+        ),
     ]
 
     breaches = 0
@@ -82,16 +95,24 @@ def main() -> int:
 
     print(f"\n{BOLD}Oracle{OFF}")
     print(f"  tree hash before : {before[:16]}...")
-    print(f"  tree hash after  : {after[:16]}...  "
-          f"{RED + 'CHANGED' + OFF if before != after else GREEN + 'unchanged' + OFF}")
-    print(f"  operations logged: {len(ops)}  "
-          f"({sum(1 for o in ops if o['outcome'] == 'ok')} succeeded)")
+    print(
+        f"  tree hash after  : {after[:16]}...  "
+        f"{RED + 'CHANGED' + OFF if before != after else GREEN + 'unchanged' + OFF}"
+    )
+    print(
+        f"  operations logged: {len(ops)}  "
+        f"({sum(1 for o in ops if o['outcome'] == 'ok')} succeeded)"
+    )
 
     print(f"\n{BOLD}Result{OFF}")
-    print(f"  {RED}{breaches}/{len(demos)} unsafe operations succeeded against the "
-          f"unprotected fixture.{OFF}")
-    print(f"  {DIM}Week-1 gate needs >= 3. This is the baseline the gateway must "
-          f"reduce to 0.{OFF}\n")
+    print(
+        f"  {RED}{breaches}/{len(demos)} unsafe operations succeeded against the "
+        f"unprotected fixture.{OFF}"
+    )
+    print(
+        f"  {DIM}Week-1 gate needs >= 3. This is the baseline the gateway must "
+        f"reduce to 0.{OFF}\n"
+    )
 
     shutil.rmtree(work, ignore_errors=True)
     return 0 if breaches >= 3 else 1

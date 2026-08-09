@@ -17,7 +17,8 @@ DNS-rebinding defences that the specification mandates, nothing more.
 from __future__ import annotations
 
 import json
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
+from typing import Any
 from uuid import uuid4
 
 import anyio
@@ -30,9 +31,16 @@ from gateway.errors import (
     safe_message,
     wire_shape,
 )
-from gateway.types import RawEnvelope, Untrusted
+from gateway.types import JsonObject, RawEnvelope, Untrusted
 
-Handler = Callable[[RawEnvelope], Awaitable[Untrusted[dict]]]
+# Minimal ASGI vocabulary. Spelled out rather than pulled from a framework: the edge
+# is one path and one method (CONV, _tech/01), and `Any` in a signature propagates
+# "unknown" through every value derived from it under pyright strict.
+type Scope = dict[str, Any]
+type Receive = Callable[[], Awaitable[dict[str, Any]]]
+type Send = Callable[[dict[str, Any]], Awaitable[None]]
+
+Handler = Callable[[RawEnvelope], Awaitable[Untrusted[JsonObject]]]
 
 _JSON = [(b"content-type", b"application/json")]
 
@@ -45,7 +53,7 @@ class Edge:
         self.handler = handler
         self._slots = anyio.Semaphore(cfg.max_concurrent_requests)
 
-    async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             return  # lifespan and websocket are not served
         request_id = uuid4().hex
@@ -56,7 +64,7 @@ class Edge:
         except Exception:  # noqa: BLE001 - never leak a traceback to the client
             await _error(send, ReasonCode.INTERNAL_ERROR, request_id)
 
-    async def _handle(self, scope: dict, receive: Any, send: Any, rid: str) -> None:
+    async def _handle(self, scope: Scope, receive: Receive, send: Send, rid: str) -> None:
         # The deadline covers EVERYTHING, body read included. Starting it after the
         # body would let a slow-loris client trickle bytes and hold a connection
         # indefinitely — the read is exactly the part an attacker controls.
@@ -66,17 +74,25 @@ class Edge:
         except TimeoutError:
             await _error(send, ReasonCode.ROUTE_TIMEOUT, rid)
 
-    async def _dispatch(self, scope: dict, receive: Any, send: Any, rid: str) -> None:
+    async def _dispatch(
+        self, scope: Scope, receive: Receive, send: Send, rid: str
+    ) -> None:
         method = scope.get("method", "")
         headers = _pairs(scope.get("headers", ()))
 
         # 2026-07-28 removed the GET stream and DELETE session teardown entirely.
         if method in ("GET", "DELETE"):
-            return await _error(send, ReasonCode.PROTO_METHOD_NOT_ALLOWED, rid, status=405)
+            return await _error(
+                send, ReasonCode.PROTO_METHOD_NOT_ALLOWED, rid, status=405
+            )
         if method != "POST":
-            return await _error(send, ReasonCode.PROTO_METHOD_NOT_ALLOWED, rid, status=405)
+            return await _error(
+                send, ReasonCode.PROTO_METHOD_NOT_ALLOWED, rid, status=405
+            )
         if scope.get("path") != self.cfg.mcp_path:
-            return await _error(send, ReasonCode.PROTO_METHOD_NOT_ALLOWED, rid, status=404)
+            return await _error(
+                send, ReasonCode.PROTO_METHOD_NOT_ALLOWED, rid, status=404
+            )
         if not self._origin_ok(headers):
             return await _error(send, ReasonCode.PROTO_ORIGIN_REJECTED, rid)
 
@@ -91,15 +107,17 @@ class Edge:
             )
             result = await self._run_watching_for_disconnect(env, receive)
 
-        payload = result.unwrap()  # the ONE unwrap on the response path (RESP-005)
-        if payload is None:
-            # A JSON-RPC notification the server accepted: 202, no body.
-            return await _send(send, 202, b"")
-        await _send(send, 200, json.dumps(payload).encode("utf-8"))
+        # The ONE unwrap on the response path (RESP-005).
+        #
+        # There is no 202 branch. v1 serves no notifications: `check_envelope` rejects
+        # a body with no `id` as PROTO_JSONRPC_INVALID, so nothing that would produce
+        # an empty response can reach here. Pyright found the branch was unreachable
+        # under the handler's own return type — dead code that read as a feature.
+        await _send(send, 200, json.dumps(result.unwrap()).encode("utf-8"))
 
     async def _run_watching_for_disconnect(
-        self, env: RawEnvelope, receive: Any
-    ) -> Untrusted[dict]:
+        self, env: RawEnvelope, receive: Receive
+    ) -> Untrusted[JsonObject]:
         """Run the handler while watching for the client going away.
 
         Reading `http.disconnect` only while consuming the body is not enough: a
@@ -108,7 +126,7 @@ class Edge:
         of `cancelled`. ROUTE-010 requires those to stay distinguishable, and a
         cancelled request must reach unit 07 so it can cancel the child.
         """
-        result: Untrusted[dict] | None = None
+        result: Untrusted[JsonObject] | None = None
         failure: BaseException | None = None
         disconnected = False
 
@@ -150,7 +168,7 @@ class Edge:
             return False
         return origins[0] in self.cfg.allowed_origins
 
-    async def _read_body(self, receive: Any) -> bytes:
+    async def _read_body(self, receive: Receive) -> bytes:
         """Bounded during receive (BRIDGE-003) - never buffer then measure."""
         chunks: list[bytes] = []
         total = 0
@@ -167,25 +185,23 @@ class Edge:
         return b"".join(chunks)
 
 
-def _pairs(raw: Any) -> tuple[tuple[str, str], ...]:
+def _pairs(raw: Iterable[tuple[bytes, bytes]]) -> tuple[tuple[str, str], ...]:
     """ASGI header pairs, names lowercased, ORDER AND DUPLICATES PRESERVED.
 
     Collapsing to a mapping here would destroy PROTO-004 before unit 02 could see it.
     latin-1 is the HTTP header encoding; it never raises, so a hostile byte becomes a
     character unit 02 rejects rather than a decode crash here.
     """
-    return tuple(
-        (k.decode("latin-1").lower(), v.decode("latin-1")) for k, v in raw
-    )
+    return tuple((k.decode("latin-1").lower(), v.decode("latin-1")) for k, v in raw)
 
 
-async def _send(send: Any, status: int, body: bytes) -> None:
+async def _send(send: Send, status: int, body: bytes) -> None:
     await send({"type": "http.response.start", "status": status, "headers": _JSON})
     await send({"type": "http.response.body", "body": body})
 
 
 async def _error(
-    send: Any, code: ReasonCode, request_id: str, *, status: int | None = None
+    send: Send, code: ReasonCode, request_id: str, *, status: int | None = None
 ) -> None:
     """Wire shapes are spec-mandated, not free choices (ADR-001 §2).
 

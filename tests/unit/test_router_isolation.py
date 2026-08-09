@@ -19,8 +19,20 @@ import pytest
 ROUTER = Path(__file__).resolve().parents[2] / "gateway" / "router.py"
 
 FORBIDDEN_MODULES = {
-    "os", "os.path", "io", "pathlib", "shutil", "tempfile", "glob",
-    "socket", "ssl", "subprocess", "httpx", "requests", "urllib", "aiohttp",
+    "os",
+    "os.path",
+    "io",
+    "pathlib",
+    "shutil",
+    "tempfile",
+    "glob",
+    "socket",
+    "ssl",
+    "subprocess",
+    "httpx",
+    "requests",
+    "urllib",
+    "aiohttp",
 }
 FORBIDDEN_CALLS = {"open", "exec", "eval", "compile", "__import__"}
 
@@ -37,7 +49,7 @@ def test_router_imports_no_io_modules() -> None:
         elif isinstance(node, ast.ImportFrom) and node.module:
             found.add(node.module.split(".")[0])
     assert not (found & FORBIDDEN_MODULES), (
-        f"ROUTE-003 violation: gateway/router.py imports {sorted(found & FORBIDDEN_MODULES)}"
+        f"ROUTE-003 violation: router.py imports {sorted(found & FORBIDDEN_MODULES)}"
     )
 
 

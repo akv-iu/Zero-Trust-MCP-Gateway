@@ -40,7 +40,9 @@ def pid_alive(pid: int) -> bool:
     if os.name == "nt":
         out = subprocess.run(
             ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
         ).stdout
         return str(pid) in out
     try:
@@ -78,7 +80,10 @@ def test_child_does_not_survive_an_abnormal_gateway_death(tmp_path: Path) -> Non
 
     parent = subprocess.Popen(
         [sys.executable, str(HELPER)],
-        env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
     )
     try:
         assert wait_for(lambda: pidfile.exists()), "child never started"
@@ -88,8 +93,11 @@ def test_child_does_not_survive_an_abnormal_gateway_death(tmp_path: Path) -> Non
         # Kill the PARENT ONLY - hard, no cleanup handlers. Do not use taskkill /T
         # or killpg here: those would kill the tree and prove nothing.
         if os.name == "nt":
-            subprocess.run(["taskkill", "/F", "/PID", str(parent.pid)],
-                           capture_output=True, check=False)
+            subprocess.run(
+                ["taskkill", "/F", "/PID", str(parent.pid)],
+                capture_output=True,
+                check=False,
+            )
         else:
             os.kill(parent.pid, signal.SIGKILL)
         parent.wait(timeout=15)
@@ -112,8 +120,9 @@ def test_child_does_not_survive_an_abnormal_gateway_death(tmp_path: Path) -> Non
 def _force_kill(pid: int) -> None:
     try:
         if os.name == "nt":
-            subprocess.run(["taskkill", "/F", "/PID", str(pid)],
-                           capture_output=True, check=False)
+            subprocess.run(
+                ["taskkill", "/F", "/PID", str(pid)], capture_output=True, check=False
+            )
         else:
             os.kill(pid, signal.SIGKILL)
     except (ProcessLookupError, OSError):

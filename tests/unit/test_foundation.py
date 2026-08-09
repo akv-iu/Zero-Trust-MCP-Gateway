@@ -194,8 +194,13 @@ def test_the_caller_cannot_mutate_arguments_through_the_dict_it_passed_in() -> N
     achieves nothing, so `deep_freeze` must COPY on the way down."""
     supplied = {"opts": {"path": "public/a.txt"}}
     req = CanonicalRequest(
-        request_id="r1", protocol_version="2026-07-28", method="tools/call",
-        jsonrpc_id=1, tool_name="write_file", arguments=supplied, body_hash="d",
+        request_id="r1",
+        protocol_version="2026-07-28",
+        method="tools/call",
+        jsonrpc_id=1,
+        tool_name="write_file",
+        arguments=supplied,
+        body_hash="d",
     )
     supplied["opts"]["path"] = "confidential/secret.txt"
     assert req.arguments["opts"]["path"] == "public/a.txt"
@@ -361,7 +366,9 @@ def test_non_loopback_bind_is_refused(tmp_path: Path) -> None:
 def test_router_and_policy_ceilings_must_agree(tmp_path: Path) -> None:
     src = (REPO / "config" / "gateway.toml").read_text("utf-8")
     p = tmp_path / "g.toml"
-    p.write_text(src.replace("max_timeout_ms = 10000", "max_timeout_ms = 999", 1), "utf-8")
+    p.write_text(
+        src.replace("max_timeout_ms = 10000", "max_timeout_ms = 999", 1), "utf-8"
+    )
     with pytest.raises(cfgmod.ConfigError):
         cfgmod.load(p)
 

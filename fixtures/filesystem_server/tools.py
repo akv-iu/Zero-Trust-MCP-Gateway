@@ -48,7 +48,11 @@ def stat_file(path: str) -> dict[str, Any]:
     with oplog("stat", path, root) as e:
         st = (root / path).stat()
         e["size"] = st.st_size
-        return {"size": st.st_size, "mtime": st.st_mtime, "is_dir": (root / path).is_dir()}
+        return {
+            "size": st.st_size,
+            "mtime": st.st_mtime,
+            "is_dir": (root / path).is_dir(),
+        }
 
 
 def write_file(path: str, content: str) -> str:

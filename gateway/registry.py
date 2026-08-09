@@ -24,7 +24,5 @@ class Registry:
         raise NotImplementedError("wave 2, agent E")
 
 
-def resolve(
-    req: CanonicalRequest, ctx: AuthzContext, reg: Registry
-) -> ResolvedTarget:
+def resolve(req: CanonicalRequest, ctx: AuthzContext, reg: Registry) -> ResolvedTarget:
     raise NotImplementedError("wave 2, agent E")

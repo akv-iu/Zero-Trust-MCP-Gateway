@@ -49,6 +49,72 @@ class ExpectedEffect(BaseModel):
     path_contains: str
 
 
+class Transport(BaseModel):
+    """Deliberate damage to the wire form, for `layer = "protocol"` scenarios.
+
+    A scenario normally says WHAT to call; the protocol class has to say HOW it
+    arrives, because the whole attack is that the header and the body disagree. That
+    cannot be expressed as a tool plus arguments — a split request names two tools.
+
+    Everything is optional and defaults to a conforming request, so a scenario states
+    only the one thing it breaks (PROTO-007: one shape, one reason code, one row).
+    """
+
+    model_config = _FROZEN
+
+    header_method: str | None = None
+    """Send this as `Mcp-Method` instead of the body's method."""
+    header_name: str | None = None
+    """Send this as `Mcp-Name` instead of the body's tool name."""
+    header_version: str | None = None
+    body_version: str | None = None
+    omit: tuple[str, ...] = ()
+    """Mirrored headers to leave out entirely (required-and-absent)."""
+    add: tuple[tuple[str, str], ...] = ()
+    """Extra raw header pairs — how a duplicate or a prohibited header is expressed."""
+    drop_meta: tuple[str, ...] = ()
+    """Envelope `_meta` keys to delete from the body."""
+    raw_body: str | None = None
+    """Replace the body outright. For malformed JSON and bad envelopes, where no
+    structured description of the payload exists."""
+
+    http_fate: Literal["delivered", "normalized", "rejected"] = "delivered"
+    """What a CONFORMING HTTP/1.1 recipient does to this request before the gateway
+    sees it. Measured, not assumed — see tests/integration/test_protocol_over_http.py.
+
+    `delivered`   arrives at the guard byte-for-byte; the guard's denial is the
+                  gateway's denial.
+    `normalized`  RFC 9110 strips leading/trailing OWS from a field value, so the
+                  request that ARRIVES is legitimate and is allowed. The guard's
+                  stricter check is defence in depth for a transport that does not
+                  normalize, and this row proves the difference exists rather than
+                  leaving it to be discovered later.
+    `rejected`    the HTTP parser refuses it outright (a CR or LF inside a field
+                  value). Denied one layer earlier than the guard, and the gateway
+                  never runs — so no audit event exists for it either.
+
+    Recording this is the point, not an accommodation. "The header value the guard
+    compares is not the header value the client sent" is precisely the divergence
+    class unit 02 exists for, and here it is inside our own stack."""
+    body_extra: dict[str, str] = Field(default_factory=dict)
+    """Extra `params` keys, e.g. MRTR's `inputResponses`."""
+
+    @field_validator("header_name", "header_method", "header_version", mode="after")
+    @classmethod
+    def _expand_scalar(cls, v: str | None) -> str | None:
+        return expand(v) if v is not None else None
+
+    @field_validator("add", mode="after")
+    @classmethod
+    def _expand_pairs(cls, v: tuple[tuple[str, str], ...]) -> tuple[tuple[str, str], ...]:
+        # CR/LF/NUL in a HEADER is core attack material — header injection, and value
+        # truncation at any intermediary that treats NUL as a terminator. Expanding
+        # only `arguments` made that class unwritable, so the corpus quietly said
+        # "read_file{CR}x", which is merely a different name. Caught by the corpus's
+        # own first run against the guard.
+        return tuple((k, expand(val)) for k, val in v)
+
+
 class Scenario(BaseModel):
     model_config = _FROZEN
 
@@ -64,6 +130,7 @@ class Scenario(BaseModel):
     risk_tier: Literal["R0", "R1", "R2", "R4"]
     notes: str
     requires_symlinks: bool = False
+    transport: Transport | None = None
 
     @field_validator("arguments", mode="after")
     @classmethod

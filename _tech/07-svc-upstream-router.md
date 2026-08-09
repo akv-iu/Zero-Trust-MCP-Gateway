@@ -12,7 +12,7 @@ async def forward(req: CanonicalRequest, dec: Decision, up: UpstreamHandle) -> R
     if dec.request_id != req.request_id:
         raise RouteDenial(ROUTE_NO_DECISION)
     if dec.decision != "allow":
-        raise RouteDenial(ROUTE_NO_DECISION)      # defensive; pipeline already raised
+        raise RouteDenial(ROUTE_NO_DECISION)  # defensive; pipeline already raised
     ...
 ```
 

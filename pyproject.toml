@@ -4,7 +4,12 @@ version = "0.1.0"
 description = "Default-deny MCP enforcement point built against the 2026-07-28 stateless specification"
 requires-python = ">=3.12"
 dependencies = [
-    "mcp",         # official MCP Python SDK — upstream stdio client leg
+    # PINNED, and the pin is a security control (ADR-002 §3). `mcp.shared.inbound`
+    # performs unit 02's mirrored-metadata comparison, so an SDK upgrade can change
+    # what the gateway believes a request MEANS. harness/scenarios/protocol_mirrored.toml
+    # is the upgrade gate: bump this pin only with that corpus green, and record the
+    # version it was validated against in tests/unit/test_sdk_pin.py.
+    "mcp==2.0.0",  # official MCP Python SDK — upstream stdio leg AND the inbound ladder
     "pydantic>=2", # every model, config, and the audit schema
     "anyio",       # structured concurrency (the SDK is anyio-native)
     "httpx",       # OPA REST calls only
