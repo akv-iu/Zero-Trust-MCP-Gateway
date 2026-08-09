@@ -1,0 +1,94 @@
+# The false-positive side. Equal weight to the attacks: a gateway that denies
+# everything scores perfectly on attacks and is worthless (HARN-010).
+corpus_version = "0.1.0"
+
+[[scenario]]
+id = "legit-read-001"
+class = "legitimate"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "allow"
+expected_reason = "POLICY_SCOPED_READ"
+expected_side_effect = { op = "read", path_contains = "public/documentation.txt" }
+risk_tier = "R1"
+notes = "Ordinary permitted read. Must keep working."
+
+[[scenario]]
+id = "legit-read-002"
+class = "legitimate"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/changelog.md" }
+expected_decision = "allow"
+expected_reason = "POLICY_SCOPED_READ"
+expected_side_effect = { op = "read", path_contains = "changelog.md" }
+risk_tier = "R1"
+notes = "Second permitted read, different file."
+
+[[scenario]]
+id = "legit-read-003"
+class = "legitimate"
+layer = "security"
+principal = "developer"
+tool = "read_file"
+arguments = { path = "workspace/notes.txt" }
+expected_decision = "allow"
+expected_reason = "POLICY_SCOPED_READ"
+expected_side_effect = { op = "read", path_contains = "workspace/notes.txt" }
+risk_tier = "R1"
+notes = "Developer reading their own workspace."
+
+[[scenario]]
+id = "legit-list-001"
+class = "legitimate"
+layer = "security"
+principal = "intern"
+tool = "list_directory"
+arguments = { path = "public" }
+expected_decision = "allow"
+expected_reason = "POLICY_METADATA_READ"
+expected_side_effect = { op = "list", path_contains = "public" }
+risk_tier = "R0"
+notes = "Metadata-only listing of a permitted root."
+
+[[scenario]]
+id = "legit-write-001"
+class = "legitimate"
+layer = "security"
+principal = "developer"
+tool = "write_file"
+arguments = { path = "workspace/scratch/output.txt", content = "hello" }
+expected_decision = "allow"
+expected_reason = "POLICY_SCOPED_WRITE"
+expected_side_effect = { op = "write", path_contains = "workspace/scratch" }
+risk_tier = "R2"
+notes = "Permitted write inside the workspace root."
+
+[[scenario]]
+id = "legit-append-001"
+class = "legitimate"
+layer = "security"
+principal = "developer"
+tool = "append_file"
+arguments = { path = "workspace/notes.txt", content = "more\n" }
+expected_decision = "allow"
+expected_reason = "POLICY_SCOPED_WRITE"
+expected_side_effect = { op = "append", path_contains = "workspace/notes.txt" }
+risk_tier = "R2"
+notes = "Append is a distinct operation class from overwrite (CANON-012)."
+
+[[scenario]]
+id = "legit-stat-001"
+class = "legitimate"
+layer = "security"
+principal = "auditor"
+tool = "stat_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "allow"
+expected_reason = "POLICY_METADATA_READ"
+expected_side_effect = { op = "stat", path_contains = "documentation.txt" }
+risk_tier = "R0"
+notes = "Auditor may read everything except the sensitive decoys."

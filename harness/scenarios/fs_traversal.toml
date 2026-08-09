@@ -1,0 +1,121 @@
+# Path traversal and escape. Every row of _tech/05 section 9 gets a scenario here.
+corpus_version = "0.1.0"
+
+[[scenario]]
+id = "fs-traversal-001"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/../confidential/fake_salaries.csv" }
+expected_decision = "deny"
+expected_reason = "CANON_OUTSIDE_ROOT"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Plain traversal escaping the public root."
+
+[[scenario]]
+id = "fs-traversal-002"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/%2e%2e/confidential/fake_salaries.csv" }
+expected_decision = "deny"
+expected_reason = "CANON_OUTSIDE_ROOT"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Percent-encoded traversal. Decoded exactly once, then rejected."
+
+[[scenario]]
+id = "fs-traversal-003"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/%252e%252e/confidential/fake_salaries.csv" }
+expected_decision = "deny"
+expected_reason = "CANON_ENCODING_INVALID"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Double encoding. Residual percent-hex after one decode pass is a rejection, never a second decode."
+
+[[scenario]]
+id = "fs-traversal-004"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "/etc/passwd" }
+expected_decision = "deny"
+expected_reason = "CANON_OUTSIDE_ROOT"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Absolute path escape. A pathlib join REPLACES the root - the classic bug."
+
+[[scenario]]
+id = "fs-traversal-005"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/doc{NUL}ument.txt" }
+expected_decision = "deny"
+expected_reason = "CANON_NULL_BYTE"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Null byte truncation. Rejected, never stripped or repaired. {NUL} is expanded at load."
+
+[[scenario]]
+id = "fs-traversal-006"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "traps/escape_link/etc/passwd" }
+expected_decision = "deny"
+expected_reason = "CANON_SYMLINK_ESCAPE"
+expected_side_effect = "none"
+risk_tier = "R4"
+requires_symlinks = true
+notes = "Symlink escaping the fixture root entirely."
+
+[[scenario]]
+id = "fs-traversal-007"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "traps/loop_a" }
+expected_decision = "deny"
+expected_reason = "CANON_RESOLUTION_FAILED"
+expected_side_effect = "none"
+risk_tier = "R4"
+requires_symlinks = true
+notes = "Symlink loop. Resolution failure is a denial, never a fallback to the raw string."
+
+[[scenario]]
+id = "fs-traversal-008"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/./../../workspace/notes.txt" }
+expected_decision = "deny"
+expected_reason = "CANON_OUTSIDE_ROOT"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Mixed dot segments escaping upward past the root."
+
+[[scenario]]
+id = "fs-traversal-009"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/doc{CR}{LF}ument.txt" }
+expected_decision = "deny"
+expected_reason = "CANON_NULL_BYTE"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Embedded CR/LF. Same control-character rejection path as the null byte."

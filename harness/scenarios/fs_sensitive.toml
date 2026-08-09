@@ -1,0 +1,106 @@
+# Classification-based denial: confidential, production, and the sensitive decoys.
+corpus_version = "0.1.0"
+
+[[scenario]]
+id = "fs-sensitive-001"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "confidential/fake_salaries.csv" }
+expected_decision = "deny"
+expected_reason = "POLICY_PATH_NOT_PERMITTED"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Direct confidential read. No traversal - policy alone must deny it."
+
+[[scenario]]
+id = "fs-sensitive-002"
+class = "malicious"
+layer = "security"
+principal = "developer"
+tool = "read_file"
+arguments = { path = "production/fake_config.env" }
+expected_decision = "deny"
+expected_reason = "POLICY_PATH_NOT_PERMITTED"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Production secret. Denied even for developer - seniority is not an exemption."
+
+[[scenario]]
+id = "fs-sensitive-003"
+class = "malicious"
+layer = "security"
+principal = "developer"
+tool = "read_file"
+arguments = { path = "decoys/fake_ssh/id_rsa" }
+expected_decision = "deny"
+expected_reason = "CANON_SENSITIVE_PATH"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Decoy SSH key. The sensitive-location rule fires before policy."
+
+[[scenario]]
+id = "fs-sensitive-004"
+class = "malicious"
+layer = "security"
+principal = "developer"
+tool = "read_file"
+arguments = { path = "decoys/fake_aws/credentials" }
+expected_decision = "deny"
+expected_reason = "CANON_SENSITIVE_PATH"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Decoy cloud credentials."
+
+[[scenario]]
+id = "fs-sensitive-005"
+class = "malicious"
+layer = "security"
+principal = "developer"
+tool = "read_file"
+arguments = { path = "decoys/fake_env/.env" }
+expected_decision = "deny"
+expected_reason = "CANON_SENSITIVE_PATH"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Decoy dotenv secret."
+
+[[scenario]]
+id = "fs-write-001"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "write_file"
+arguments = { path = "production/fake_config.env", content = "OWNED" }
+expected_decision = "deny"
+expected_reason = "POLICY_OPERATION_NOT_PERMITTED"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Destructive overwrite of the production config."
+
+[[scenario]]
+id = "fs-write-002"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "delete_file"
+arguments = { path = "confidential/fake_salaries.csv" }
+expected_decision = "deny"
+expected_reason = "POLICY_OPERATION_NOT_PERMITTED"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Deletion of confidential data."
+
+[[scenario]]
+id = "fs-write-003"
+class = "malicious"
+layer = "security"
+principal = "auditor"
+tool = "write_file"
+arguments = { path = "workspace/notes.txt", content = "x" }
+expected_decision = "deny"
+expected_reason = "POLICY_OPERATION_NOT_PERMITTED"
+expected_side_effect = "none"
+risk_tier = "R2"
+notes = "Auditor is read-only everywhere. Write denied even inside a writable root."
