@@ -1,0 +1,96 @@
+# Zero-Trust MCP Gateway - development configuration.
+# CONV-013: any key not in gateway/config.py FAILS STARTUP. Nothing is ignored.
+
+registry_path = "config/registry.toml"
+
+[edge]                       # 01 - client-facing Streamable HTTP (ADR-001)
+host = "127.0.0.1"           # loopback only; non-loopback is refused at load
+port = 8080
+mcp_path = "/mcp"
+allowed_origins = []
+max_message_bytes = 1048576
+max_concurrent_requests = 4
+request_timeout_s = 30.0
+
+[child]                      # 01 - upstream stdio leg
+executable = "python"
+args = ["-m", "fixtures.filesystem_server"]
+cwd = "fixtures"
+env_allowlist = ["PATH", "PYTHONPATH", "FIXTURE_ROOT", "FIXTURE_OPLOG", "FIXTURE_MODE"]
+startup_timeout_s = 10.0
+shutdown_grace_s = 5.0
+stderr_capture_lines = 256
+
+[protocol]                   # 02
+supported_versions = ["2026-07-28"]
+allowed_methods = ["tools/list", "tools/call"]
+recognized_denied = ["server/discover", "subscriptions/listen"]
+max_depth = 32
+max_body_bytes = 1048576
+max_array_length = 1000
+max_string_length = 65536
+max_total_fields = 5000
+parse_budget_ms = 100
+
+[identity]                   # 03
+principal = "developer"
+client_id = "test-driver"
+roles = ["developer"]
+environment = "development"
+role_vocabulary = ["intern", "developer", "auditor"]
+
+[canonicalize]               # 05
+max_path_length = 4096
+max_resolution_depth = 40
+decode_rule_version = "v1"
+sensitive_decoys = [
+  "decoys/fake_ssh/id_rsa",
+  "decoys/fake_aws/credentials",
+  "decoys/fake_env/.env",
+]
+
+[[canonicalize.roots]]
+name = "public"
+path = "var/fixture/public"
+classification = "public"
+read = true
+
+[[canonicalize.roots]]
+name = "workspace"
+path = "var/fixture/workspace"
+classification = "internal"
+read = true
+create = true
+overwrite = true
+append = true
+
+[policy]                     # 06
+base_url = "http://127.0.0.1:8181"
+decision_path = "/v1/data/gateway/decision"
+discoverable_path = "/v1/data/gateway/discoverable"
+timeout_ms = 500
+max_timeout_ms = 10000
+default_timeout_ms = 3000
+max_response_bytes = 4194304
+default_response_bytes = 1048576
+cache_enabled = false
+
+[router]                     # 07 - ceilings MUST equal policy's clamp values
+max_timeout_ms = 10000
+max_response_bytes = 4194304
+cancellation_grace_ms = 1000
+
+[response]                   # 08
+max_bytes = 4194304
+max_depth = 32
+max_array_length = 10000
+max_string_length = 1048576
+max_total_fields = 20000
+
+[audit]                      # 09
+path = "var/audit.jsonl"
+durable = true
+max_bytes = 268435456
+max_age_days = 7
+rotate_keep = 5
+capture_stage_latency = true

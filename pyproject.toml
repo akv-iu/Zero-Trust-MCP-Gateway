@@ -1,0 +1,48 @@
+[project]
+name = "zero-trust-mcp-gateway"
+version = "0.1.0"
+description = "Default-deny MCP enforcement point built against the 2026-07-28 stateless specification"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp",         # official MCP Python SDK — upstream stdio client leg
+    "pydantic>=2", # every model, config, and the audit schema
+    "anyio",       # structured concurrency (the SDK is anyio-native)
+    "httpx",       # OPA REST calls only
+    "jsonschema",  # tool argument validation against MCP inputSchema
+    "uvicorn",     # ASGI server for the loopback HTTP client edge (ADR-001)
+]
+
+# Deliberately absent — see _tech/00-conventions.md §1:
+#   orjson    cannot detect duplicate keys, which would make PROTO_DUPLICATE_FIELD a lie
+#   PyYAML    config is TOML via stdlib tomllib
+#   structlog the audit log IS the log
+#   fastapi   the edge is one path and one method; a router framework buys nothing
+
+[project.optional-dependencies]
+agent = ["pydantic-ai-slim[groq]"] # v1.1 only. CI proves CONV-016 by not installing it.
+
+[dependency-groups]
+dev = ["pytest", "pytest-anyio", "hypothesis", "ruff", "pyright"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 90
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pyright]
+include = ["gateway", "harness", "scripts"]
+typeCheckingMode = "strict"
+reportMissingImports = false
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["gateway"]
