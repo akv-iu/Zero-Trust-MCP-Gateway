@@ -44,6 +44,7 @@ async def handle(env: RawEnvelope, deps: Deps) -> Untrusted[JsonObject]:
         builder.set(**protocol.audit_fields(req))
         with builder.stage(Stage.IDENTITY):
             ctx = identity.resolve(req, deps.config.identity)
+        builder.set(**identity.audit_fields(ctx))
         with builder.stage(Stage.REGISTRY):
             tgt = registry.resolve(req, ctx, deps.registry)
         with builder.stage(Stage.CANONICAL):

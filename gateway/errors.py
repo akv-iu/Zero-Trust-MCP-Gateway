@@ -64,7 +64,13 @@ class ReasonCode(StrEnum):
     PROTO_MRTR_UNSUPPORTED = "PROTO_MRTR_UNSUPPORTED"  # ADR-001 §5: inputResponses
 
     # -- 03 identity -------------------------------------------------------
-    IDENT_CONTEXT_UNAVAILABLE = "IDENT_CONTEXT_UNAVAILABLE"
+    # (none) IDENT_CONTEXT_UNAVAILABLE was removed when unit 03 landed. Config
+    # validation runs at startup and the context is built from already-checked
+    # values, so there is no request-time identity failure to name — the spec's own
+    # failure table says stdio identity exists at startup or the gateway does not
+    # run. A code no scenario can reach violates CONV-010 permanently; an unexpected
+    # exception here becomes INTERNAL_ERROR at the pipeline, which denies. Removed
+    # before any release, so CONV-008's no-meaning-change rule is not engaged.
 
     # -- 04 registry -------------------------------------------------------
     REG_SERVER_UNKNOWN = "REG_SERVER_UNKNOWN"

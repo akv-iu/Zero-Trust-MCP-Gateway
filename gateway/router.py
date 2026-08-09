@@ -6,6 +6,16 @@ Owner: wave 3.
 This module MUST NOT import open/Path/os/shutil/socket/httpx/subprocess (ROUTE-003).
 scripts/check_router_isolation.sh enforces it in CI.
 
+OPEN: WRITE-AHEAD AUDIT (unit 03 review). `pipeline.handle` writes its event in a
+`finally`, so it runs AFTER `forward`. If the sink fails once a mutating call has
+reached the child, the client is correctly told the request failed while the effect
+has already happened and no record of it survives — AUDIT-009 asks for the operation
+to be denied when its event cannot be persisted, which holds for reads and not for
+writes. The fix is the paired shape the fixture's own op-log already uses: an
+attempt record before the call, a terminal record after. It belongs here because
+this is the only stage that knows a side effect is about to occur.
+See `docs/threat-model.md` §2.3 and `_specs/90-deferred-register.md` §10b.
+
 OPEN WIRING (unit 01 review, finding 8): both ends of cancellation exist and neither
 is connected, because the connection belongs here.
 

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node:*codex-companion.mjs*)",
+      "Bash(python -m pytest:*)",
+      "Bash(python -m ruff:*)",
+      "Bash(python -m pyright:*)",
+      "Bash(python -m scripts.run_corpus:*)",
+      "Bash(python -m scripts.damage_demo:*)",
+      "Bash(python -m scripts.sync_reason_codes:*)"
+    ]
+  }
+}

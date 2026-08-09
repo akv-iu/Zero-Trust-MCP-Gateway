@@ -73,9 +73,10 @@ Fields:
 |---|---|---|
 | Launcher configuration missing principal/client/roles | startup fails | — (not ready) |
 | Configuration references an undefined role | startup fails | — (not ready) |
-| Context cannot be constructed for a request | deny | `IDENT_CONTEXT_UNAVAILABLE` |
 
 Note there is no runtime "authentication failure" in v1 — identity either exists at startup or the gateway does not start. That is the honest shape of `stdio` identity, and the spec does not manufacture a richer one.
+
+> **Corrected on implementation.** This table originally carried a third row: *context cannot be constructed for a request → deny → `IDENT_CONTEXT_UNAVAILABLE`*. It contradicted the paragraph directly above it. Config validation runs at startup, and the context is seven assignments from values that validation already checked, so the condition cannot occur at request time. A reason code no corpus scenario can reach violates `CONV-010` permanently — it would sit unproven forever, or force a scenario modelling something the design calls impossible. The code was removed from `ReasonCode` before any release, so `CONV-008`'s no-meaning-change rule is not engaged. An unexpected exception in this stage becomes `INTERNAL_ERROR` at the pipeline, which denies.
 
 ---
 
@@ -98,7 +99,7 @@ Principal identifier; client identifier; role list; environment label; the close
 3. A request whose arguments, metadata, or mirrored headers contain principal-, role-, or client-shaped fields resolves to the configured identity and nothing else.
 4. Startup fails when the launcher configuration omits principal, client, or roles.
 5. Startup fails when configuration names a role outside the closed vocabulary.
-6. Two launcher configurations with different principals produce different decisions under the same policy for the same request — proving identity actually reaches policy.
+6. Two launcher configurations with different principals produce different decisions under the same policy for the same request — proving identity actually reaches policy. **NOT IMPLEMENTED — integration pending unit 06.** There is no policy engine to disagree with itself yet. `test_a_different_config_produces_a_different_context` covers only the precondition (config → context is injective on principal) and says so; it must not be read as satisfying this row. Unit 06 owns the paired corpus scenario, and this row is a gate on unit 06 being marked done.
 7. The context object rejects mutation after construction.
 
 ---
@@ -107,4 +108,4 @@ Principal identifier; client identifier; role list; environment label; the close
 
 - This unit is small, and its smallness is correct. Resist adding an identity abstraction layer for the OIDC that v1 does not build — the deferred register records the trigger, and a single-implementation interface is exactly the speculative abstraction to avoid.
 - The assurance enum is the load-bearing design decision: make `unverified_local` the only value v1 can produce, so overstating identity requires a schema change and a code review rather than a typo.
-- Test 6 is the one that proves identity is wired to policy rather than merely logged.
+- Test 6 is the one that proves identity is wired to policy rather than merely logged. It is therefore the one that cannot be faked from inside this unit — unit 03 can be complete and correct while identity never reaches a decision, which is exactly the state the repository is in until unit 06 lands.

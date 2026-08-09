@@ -136,6 +136,18 @@ Each entry names **what was cut**, **why**, and **the trigger** — the concrete
 
 ---
 
+## 10b. Found during implementation
+
+Added when a review turned up a real gap that v1 deliberately does not close. Each
+is documented as a limitation in `docs/threat-model.md`, not silently carried.
+
+| Cut | Found by | Why it is out of v1 | Trigger that revives it |
+|---|---|---|---|
+| **Binding the listener to its launcher** — a unix socket with filesystem permissions, or a per-launch capability token | Codex adversarial review, unit 03 | The edge authenticates no caller, so any local process can be authorized as the configured principal (`docs/threat-model.md` §1.2). v1's stated position is that every local process is one trust domain. Fixing it properly is an OS-binding problem, and the fix must gate access **without** deriving the principal from MCP data — IDENT-003 forbids that | Distinct principals need to be co-hosted outside a test harness, or the gateway is deployed anywhere a hostile local process is in the model |
+| **Write-ahead audit record before `router.forward`** | Codex adversarial review, unit 03 | AUDIT-009 wants a protected operation denied when its event cannot be persisted. Today the event is written in `pipeline.handle`'s `finally`, so a sink failure after a mutating call leaves an effect with no record (`docs/threat-model.md` §2.3). The fix is the paired attempt/terminal shape the fixture's own op-log already uses | Unit 07, where the ordering lives. Not deferred past v1 — deferred to the unit that owns it |
+
+---
+
 ## 11. Kept in v1 despite being cuttable
 
 Recorded so they are not cut in a later round of enthusiasm:

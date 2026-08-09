@@ -50,7 +50,7 @@ Two secondary points remain true and usable, stated at their real strength:
 | **Streamable HTTP client edge (loopback), stdio upstream leg** | The only transport carrying mirrored metadata ([ADR-001](_specs/ADR-001-transport-and-mirrored-metadata.md)); one POST endpoint, no TLS, no auth, no sessions |
 | `tools/list` filtering, `tools/call` enforcement | The only MCP methods with a protected side effect in scope |
 | JSON-RPC hardening + **header/body consistency across all four mirrored families** | The differentiator (§2) |
-| Locally configured principal | Honest identity for `stdio`; no IdP required |
+| Locally configured principal | Honest identity for a loopback edge that authenticates no caller ([ADR-001](_specs/ADR-001-transport-and-mirrored-metadata.md), threat model §1.2); no IdP required |
 | Explicit server registry + tool schema fingerprint | Default-deny routing; drift detection |
 | Filesystem path canonicalization | The one canonicalizer family that is provably testable on a laptop |
 | OPA/Rego policy, fail-closed | Deterministic authorization, versioned |
@@ -100,7 +100,7 @@ Eleven service units for v1, one for v1.1. Each has a spec in `_specs/`. They ar
 
 ```mermaid
 flowchart TD
-    C[MCP client] -->|stdio| S1[01 stdio-bridge]
+    C[MCP client] -->|Streamable HTTP, loopback| S1[01 edge + stdio bridge]
     S1 --> S2[02 protocol-guard]
     S2 --> S3[03 identity-resolver]
     S3 --> S4[04 registry]
@@ -132,10 +132,10 @@ Ordered so that each step is runnable and testable the day it lands. Nothing is 
 | 3 | `01-svc-stdio-bridge` | 10 | Client → gateway → fixture passthrough works, zero policy | **done** |
 | 4 | `09-svc-audit-log` | — | Every passthrough writes one JSONL event | **done** |
 | 5 | `02-svc-protocol-guard` | 01, 09 | Malformed JSON-RPC and header/body mismatch rejected + audited | **done** |
-| 6 | `03-svc-identity-resolver` | 09 | Principal appears in the audit event, labelled `local_config` | next |
-| 7 | `04-svc-registry` | 02, 09 | Unregistered server/tool denied; schema fingerprint recorded | |
+| 6 | `03-svc-identity-resolver` | 09 | Principal appears in the audit event, labelled `local_config`. Acceptance tests 1–5 and 7 pass; **test 6 is deferred to unit 06** — it asserts two principals produce different *decisions*, and there is no policy engine yet | **done** |
+| 7 | `04-svc-registry` | 02, 09 | Unregistered server/tool denied; schema fingerprint recorded | next |
 | 8 | `05-svc-canonicalizer-fs` | 04 | Traversal/encoding/symlink cases resolve to a canonical path or reject | |
-| 9 | `06-svc-policy-broker` | 03, 04, 05, 09 | OPA allow/deny with reason code; OPA killed → all protected calls denied | |
+| 9 | `06-svc-policy-broker` | 03, 04, 05, 09 | OPA allow/deny with reason code; OPA killed → all protected calls denied; **carries spec-03 test 6** (two principals → different decisions, same request) and publishes `IdentityConfig.role_vocabulary` to OPA as data rather than duplicating it | |
 | 10 | `07-svc-upstream-router` | 06, 10 | Only allowed calls reach the fixture; obligations enforced | |
 | 11 | `08-svc-response-guard` | 07 | Oversized/mismatched upstream responses become controlled errors | |
 | 12 | `11-svc-eval-harness` (full) | all | 100+ scenarios, `direct` vs `protected`, overhead numbers, report | |

@@ -84,6 +84,13 @@ class IdentityConfig(BaseModel):
     roles: tuple[str, ...]
     environment: str = "development"
     role_vocabulary: tuple[str, ...] = ("intern", "developer", "auditor")
+    """The closed role set, and its only home.
+
+    `_tech/03` §3 anticipated duplicating this in Rego as `data.roles` and keeping
+    the two in sync with a test. Unit 06 must PUBLISH this to OPA instead: a role
+    that exists in config but not in policy silently denies everything for that
+    principal, and the cheapest fix for a sync bug is to have nothing to sync.
+    Guarded by `test_identity.py::test_the_role_vocabulary_has_one_home`."""
 
     @model_validator(mode="after")
     def _check(self) -> IdentityConfig:
