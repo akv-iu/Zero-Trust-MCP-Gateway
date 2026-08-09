@@ -45,6 +45,7 @@ from typing import Any, Final, cast
 from mcp.shared.inbound import (
     MCP_METHOD_HEADER,
     MCP_NAME_HEADER,
+    MCP_PARAM_HEADER_PREFIX,
     MCP_PROTOCOL_VERSION_HEADER,
     NAME_BEARING_METHODS,
     InboundLadderRejection,
@@ -66,6 +67,10 @@ from gateway.types import CanonicalRequest, JsonObject, RawEnvelope
 
 _JSONRPC_VERSION: Final = "2.0"
 _SENTINEL_PREFIX: Final = "=?base64?"
+
+#: Lowercased, because ASGI header names arrive lowercased and HTTP field names are
+#: case-insensitive. Derived from the SDK constant so the two cannot drift.
+_PARAM_PREFIX: Final = MCP_PARAM_HEADER_PREFIX.lower()
 
 #: MRTR (SEP-2322) request-side key. ADR-001 §5: v1 refuses rather than proxies —
 #: a mid-request input exchange is a second authorization surface with no policy.
@@ -317,6 +322,34 @@ def check_metadata_shape(headers: Mapping[str, str], method: str) -> None:
             raise _deny(ReasonCode.PROTO_METADATA_INVALID, f"{name} bad sentinel")
 
 
+def find_duplicated_param_header(metadata: tuple[tuple[str, str], ...]) -> str | None:
+    """Name of an `Mcp-Param-*` header supplied more than once, or `None`.
+
+    Ours, not the SDK's. `find_duplicated_routing_header` covers the three routing
+    headers and says in its own docstring that `Mcp-Param-*` duplicates belong to
+    `validate_mcp_param_headers` — which detects them by iterating `headers.items()`,
+    and therefore only sees what a *multi-valued* mapping yields. Unit 04 receives
+    `CanonicalRequest.mcp_param_headers`, a plain folded mapping, so by then a
+    duplicate is already gone. Catching it here, on the raw pairs, is the only place
+    the information still exists (CLAUDE.md: duplicate detection is ours).
+
+    Stricter than the SDK's rule on purpose: it rejects a duplicate only on an
+    ANNOTATED position, so a repeated header naming an unannotated argument would
+    pass. That header still reaches every intermediary between the client and here,
+    and first-copy and last-copy readers still disagree about it — which is the
+    entire failure the mirrored-metadata requirement exists to prevent.
+    """
+    seen: set[str] = set()
+    for name, _ in metadata:
+        key = name.lower()
+        if not key.startswith(_PARAM_PREFIX):
+            continue
+        if key in seen:
+            return key
+        seen.add(key)
+    return None
+
+
 #: Which mirrored field the SDK's HEADER_MISMATCH refers to.
 #:
 #: Keyed on the SDK's own exported header-name constants, which appear in the
@@ -417,11 +450,13 @@ def validate(env: RawEnvelope, cfg: ProtocolConfig) -> CanonicalRequest:
     check_limits(body, cfg)
     method, jsonrpc_id = check_envelope(body)
 
-    if (dup := find_duplicated_routing_header(env.metadata)) is not None:
-        # Detected on the raw PAIRS. Folding to a mapping first would silently keep
-        # one copy, and which one depends on the folding order - the precise
-        # divergence between two readers of the same request that this unit exists
-        # to make impossible.
+    # Both detected on the raw PAIRS. Folding to a mapping first would silently keep
+    # one copy, and which one depends on the folding order - the precise divergence
+    # between two readers of the same request that this unit exists to make impossible.
+    dup = find_duplicated_routing_header(env.metadata) or find_duplicated_param_header(
+        env.metadata
+    )
+    if dup is not None:
         raise _deny(ReasonCode.PROTO_METADATA_DUPLICATE, dup)
 
     headers = dict(env.metadata)
@@ -471,6 +506,9 @@ def validate(env: RawEnvelope, cfg: ProtocolConfig) -> CanonicalRequest:
         tool_name=name if isinstance(name, str) else None,
         arguments=arguments,
         body_hash=sha256_hex(env.body),
+        mcp_param_headers={
+            k: v for k, v in headers.items() if k.startswith(_PARAM_PREFIX)
+        },
     )
 
 
@@ -492,6 +530,7 @@ __all__ = [
     "check_method_allowed",
     "check_mrtr",
     "check_param_headers",
+    "find_duplicated_param_header",
     "parse",
     "prescan",
     "run_ladder",

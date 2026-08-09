@@ -28,7 +28,7 @@ class = "malicious"
 layer = "protocol"
 principal = "intern"
 tool = "delete_file"
-arguments = { path = "workspace/notes.md" }
+arguments = { path = "workspace/notes.txt" }
 expected_decision = "deny"
 expected_reason = "PROTO_HEADER_BODY_NAME_MISMATCH"
 expected_side_effect = "none"

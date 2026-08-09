@@ -19,6 +19,7 @@ import pytest
 
 from fixtures.build_tree import build
 from gateway import config as cfgmod
+from gateway import startup
 from gateway.bridge import upstream
 
 pytestmark = pytest.mark.anyio
@@ -35,10 +36,11 @@ def test_shipped_child_module_is_importable() -> None:
     """Cheap guard: the configured `-m` target must resolve."""
     import importlib.util
 
-    cfg = cfgmod.load(REPO / "config" / "gateway.toml")
-    assert cfg.child.args[0] == "-m"
-    spec = importlib.util.find_spec(cfg.child.args[1])
-    assert spec is not None, f"{cfg.child.args[1]} is not importable"
+    _, reg = startup.load_all(REPO / "config" / "gateway.toml")
+    args = reg.server.args
+    assert args[0] == "-m"
+    spec = importlib.util.find_spec(args[1])
+    assert spec is not None, f"{args[1]} is not importable"
 
 
 async def test_shipped_config_actually_starts_the_child(
@@ -56,8 +58,10 @@ async def test_shipped_config_actually_starts_the_child(
     monkeypatch.setenv("FIXTURE_ALLOW_WEAK_ISOLATION", "1")
     monkeypatch.delenv("FIXTURE_MODE", raising=False)
 
-    cfg = cfgmod.load(REPO / "config" / "gateway.toml")
-    child = cfg.child.model_copy(update={"executable": sys.executable, "cwd": str(REPO)})
+    cfg, reg = startup.load_all(REPO / "config" / "gateway.toml")
+    child = reg.server.child_config(cfg.child).model_copy(
+        update={"executable": sys.executable, "cwd": str(REPO)}
+    )
 
     with anyio.fail_after(45):
         async with upstream(child) as up:
@@ -72,23 +76,23 @@ def test_shipped_env_allowlist_covers_what_the_fixture_needs() -> None:
     """The fixture refuses to start without FIXTURE_ROOT / FIXTURE_OPLOG, and on a
     developer laptop it also needs FIXTURE_ALLOW_WEAK_ISOLATION. Omitting any of them
     from the allowlist is a silent startup failure."""
-    cfg = cfgmod.load(REPO / "config" / "gateway.toml")
+    _, reg = startup.load_all(REPO / "config" / "gateway.toml")
     required = {
         "FIXTURE_ROOT",
         "FIXTURE_OPLOG",
         "FIXTURE_MODE",
         "FIXTURE_ALLOW_WEAK_ISOLATION",
     }
-    assert required <= set(cfg.child.env_allowlist)
+    assert required <= set(reg.server.env_allowlist)
 
 
 def test_shipped_allowlist_excludes_provider_keys() -> None:
     """AGENT-005: GROQ_API_KEY must never reach the child (BRIDGE-006)."""
-    cfg = cfgmod.load(REPO / "config" / "gateway.toml")
+    _, reg = startup.load_all(REPO / "config" / "gateway.toml")
     banned = {"GROQ_API_KEY", "CLOUDFLARE_API_TOKEN", "OPENAI_API_KEY"}
-    assert not (banned & set(cfg.child.env_allowlist))
+    assert not (banned & set(reg.server.env_allowlist))
     assert not any(
-        "KEY" in k or "TOKEN" in k or "SECRET" in k for k in cfg.child.env_allowlist
+        "KEY" in k or "TOKEN" in k or "SECRET" in k for k in reg.server.env_allowlist
     )
 
 

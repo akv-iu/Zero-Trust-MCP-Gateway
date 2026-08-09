@@ -94,7 +94,6 @@ Fields deliberately absent in v1: credential strategy (the local child needs non
 
 | Condition | Reason code |
 |---|---|
-| Server identifier not registered | `REG_SERVER_UNKNOWN` |
 | Server quarantined or disabled | `REG_SERVER_UNAVAILABLE` |
 | Tool not in approved set | `REG_TOOL_UNKNOWN` |
 | Tool quarantined | `REG_TOOL_QUARANTINED` |
@@ -102,7 +101,11 @@ Fields deliberately absent in v1: credential strategy (the local child needs non
 | Fingerprint never verified this session | `REG_SCHEMA_UNVERIFIED` |
 | Arguments fail approved schema | `REG_ARGS_INVALID` |
 | Unknown argument field | `REG_ARGS_UNKNOWN_FIELD` |
-| Registry file unloadable or invalid at startup | not ready; all protected calls denied |
+| Registry file unloadable or invalid at startup | `ConfigError`; the gateway does not run |
+| Approved schema carries an invalid `x-mcp-header` | `ConfigError`; the gateway does not run (ADR-001 §3.1) |
+| Registry approves a protocol version the guard does not accept | `ConfigError`; checked in `startup.check_protocol_version` |
+
+`REG_SERVER_UNKNOWN` was removed when this unit landed: v1 has exactly one upstream and no MCP message carries a server identifier, so REG-001 is satisfied by there being no field in which to ask. `REG_HEADER_ANNOTATION_INVALID` went with it — a load-time refusal is a `ConfigError`, and giving one a reason code implies a wire shape and an audit record that can never exist. Both return with the triggers in `90-deferred-register.md` §10c.
 
 ---
 

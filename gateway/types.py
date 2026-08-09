@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 type RequestId = str
 """uuid4().hex — unguessable and unique. Sortability is not required."""
@@ -98,6 +98,20 @@ class CanonicalRequest(BaseModel):
     tool_name: str | None
     arguments: Mapping[str, Any]
     body_hash: str
+    mcp_param_headers: Mapping[str, str] = Field(default_factory=dict)
+    """The `Mcp-Param-*` headers, names lowercased. The ONE exception to "no
+    transport data past stage 02", and it is carried rather than re-read.
+
+    This family cannot be checked at stage 02: which arguments are mirrored is
+    declared by `x-mcp-header` inside the APPROVED `inputSchema`, which only unit 04
+    resolves (ADR-001 §3.1). Stage 04 still runs before policy and the router, so
+    PROTO-002 holds. Only this family is carried — handing on `RawEnvelope` would
+    give every later stage a second, unvalidated view of the request, which is the
+    split-authorization bug this gateway exists to prevent.
+
+    Already folded, and safely: stage 02 rejects a duplicated `mcp-param-*` on the
+    raw pairs, so nothing is lost by the time this mapping is built.
+    """
 
     @field_validator("arguments", mode="after")
     @classmethod
@@ -105,6 +119,11 @@ class CanonicalRequest(BaseModel):
         # frozen=True stops rebinding, not mutation of a held dict — and nested
         # values are the part that gets missed. See `deep_freeze`.
         return deep_freeze(v)
+
+    @field_validator("mcp_param_headers", mode="after")
+    @classmethod
+    def _freeze_headers(cls, v: Mapping[str, str]) -> Mapping[str, str]:
+        return MappingProxyType(dict(v))
 
 
 class AuthzContext(BaseModel):
@@ -122,15 +141,31 @@ class AuthzContext(BaseModel):
 
 
 class ResolvedTarget(BaseModel):
-    """04."""
+    """04. What the registry approved — never what the upstream advertised."""
 
     model_config = _FROZEN
 
     server_id: str
-    tool_name: str
-    schema_fingerprint: str
+    tool_name: str | None
+    """`None` for `tools/list`, which names no tool. Every OTHER method the allowlist
+    admits is a call against one approved tool, so `None` here means exactly one
+    thing and the validator below keeps it that way."""
+    schema_fingerprint: str | None
     registry_risk_tier: RiskTier
     operation: Operation
+
+    @model_validator(mode="after")
+    def _tool_and_fingerprint_agree(self) -> ResolvedTarget:
+        """A tool without its pinned fingerprint is the shape REG-009 forbids.
+
+        Making it unrepresentable is worth more than a check at the one call site
+        that builds it today: a later stage reading `tool_name` and finding a
+        fingerprint of `None` would have no way to tell "no tool" from "tool whose
+        approval was never verified", and the second must never route.
+        """
+        if (self.tool_name is None) != (self.schema_fingerprint is None):
+            raise ValueError("tool_name and schema_fingerprint must be present together")
+        return self
 
 
 class DerivedAttributes(BaseModel):

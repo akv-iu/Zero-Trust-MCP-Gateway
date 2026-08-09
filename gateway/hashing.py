@@ -13,9 +13,20 @@ import json
 from collections.abc import Mapping
 from typing import Any, Final, cast
 
-FINGERPRINT_VERSION: Final[str] = "v1"
+FINGERPRINT_VERSION: Final[str] = "v2"
 """Normalization rule version. Changing the rule bumps this so stored fingerprints
-are migrated deliberately rather than silently invalidated (REG-005)."""
+are migrated deliberately rather than silently invalidated (REG-005).
+
+**v2** — `registry.normalize` stopped substituting a typed empty for an absent
+optional field and now omits the key instead, so an *absent* `outputSchema` no longer
+hashes identically to a *present empty* one. v1 values are not comparable and every
+stored fingerprint was regenerated with `scripts/fingerprint_tools.py`.
+
+The bump is the point of the prefix and it was nearly missed: the rule changed while
+this string still said v1, which would have made a v1 fingerprint and a v2 fingerprint
+of the same tool silently incomparable rather than loudly so.
+`test_registry.py::test_the_version_prefix_tracks_the_normalization_rule` pins a
+golden value per version, so changing the rule without changing this string fails."""
 
 
 def _encodable(o: Any) -> dict[str, Any]:

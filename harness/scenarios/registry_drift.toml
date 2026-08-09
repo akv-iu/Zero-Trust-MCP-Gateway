@@ -1,0 +1,180 @@
+# Registry: default deny, schema pinning, and tool-description poisoning (unit 04).
+#
+# The upstream MCP server supplies its own tool names, descriptions, schemas and
+# annotations. None of it is trustworthy, and none of it is authorization. These rows
+# are the requests that test whether the gateway believes the registry or the server.
+#
+# In `direct` mode every one of these lands: the fixture happily runs an unapproved
+# tool, accepts an argument no approved schema allows, and executes a tool whose
+# advertisement claims it is harmless. That is the "before" measurement.
+#
+# WHAT IS NOT HERE, and why. Four REG_* codes are decided by the gateway's STARTUP
+# state, not by the content of a request, so no row of tool + arguments can reach
+# them — a corpus scenario describes a request:
+#
+#   REG_SCHEMA_DRIFT        `verify_schemas` at handshake, against a live upstream
+#   REG_TOOL_QUARANTINED    the per-request consequence of the above
+#   REG_SERVER_UNAVAILABLE  `state = "quarantined" | "disabled"` in the registry file
+#   REG_SCHEMA_UNVERIFIED   a call arriving before the handshake completed
+#
+# Reaching them from the corpus needs a differently-configured gateway per row, which
+# unit 11's protected client cannot yet launch. Until it can, all four are covered by
+# `tests/unit/test_registry.py` against the REAL fixture in `FIXTURE_MODE=drift` and
+# `FIXTURE_MODE=poison` — the same upstream, the same comparison, driven from a test
+# instead of a corpus row. Tracked in `_specs/90-deferred-register.md` §10c.
+#
+# REG_HEADER_ANNOTATION_INVALID and REG_SERVER_UNKNOWN are GONE. Neither had a
+# request-time raise path — the first is a load-time refusal (`ConfigError`, the
+# gateway does not start), the second has no field in any MCP message to name a
+# server with — and CONV-010 requires every code to be reachable by a scenario.
+# Removed for the reason IDENT_CONTEXT_UNAVAILABLE was. See `gateway/errors.py` and
+# `_specs/90-deferred-register.md` §10c for the triggers that revive them.
+
+corpus_version = "0.1.0"
+
+# ---------------------------------------------------------------------------
+# REG-003 — advertisement is input, not authorization
+# ---------------------------------------------------------------------------
+
+[[scenario]]
+id = "reg-unknown-001"
+class = "malicious"
+layer = "security"
+principal = "developer"
+tool = "exec_shell"
+arguments = { command = "whoami" }
+expected_decision = "deny"
+expected_reason = "REG_TOOL_UNKNOWN"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "A tool that exists in no registry entry. The gateway must not proxy it on the theory that the upstream will refuse — the upstream is what we are protecting the caller from."
+
+[[scenario]]
+id = "reg-unknown-002"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file "
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "REG_TOOL_UNKNOWN"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "Trailing space on an approved name. Registry lookup is exact; a normalizing lookup would make the approved set larger than the file says it is, and nobody reviewing the file would see it."
+
+[[scenario]]
+id = "reg-unknown-003"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "READ_FILE"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "REG_TOOL_UNKNOWN"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "Case variant. Same reason as reg-unknown-002, and the one a case-insensitive dict would let through."
+
+# ---------------------------------------------------------------------------
+# REG-012 / REG-013 — the approved schema, before policy
+# ---------------------------------------------------------------------------
+
+[[scenario]]
+id = "reg-args-001"
+class = "malicious"
+layer = "security"
+principal = "developer"
+tool = "read_file"
+arguments = { path = "public/documentation.txt", follow_symlinks = "true" }
+expected_decision = "deny"
+expected_reason = "REG_ARGS_UNKNOWN_FIELD"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "An argument the approved schema does not define, named to sound like a feature. additionalProperties:false is what rejects it, which is why every approved schema is required to carry it rather than trusted to."
+
+[[scenario]]
+id = "reg-args-002"
+class = "malicious"
+layer = "security"
+principal = "developer"
+tool = "write_file"
+arguments = { path = "workspace/notes.txt" }
+expected_decision = "deny"
+expected_reason = "REG_ARGS_INVALID"
+expected_side_effect = "none"
+risk_tier = "R2"
+notes = "A required argument omitted. Denied at stage 04, so the upstream is never asked to guess a default — a tool invoked with fewer arguments than its schema requires is a tool doing something nobody authorized."
+
+[[scenario]]
+id = "reg-args-003"
+class = "malicious"
+layer = "security"
+principal = "developer"
+tool = "read_file"
+arguments = { path = "public/documentation.txt", __proto__ = "polluted" }
+expected_decision = "deny"
+expected_reason = "REG_ARGS_UNKNOWN_FIELD"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "Prototype-pollution-shaped key. Harmless to Python and not harmless to every MCP server; the closed schema rejects it without the gateway needing to know which servers care."
+
+# ---------------------------------------------------------------------------
+# ADR-001 §3.1 — Mcp-Param-*, the mirrored family only stage 04 can check
+# ---------------------------------------------------------------------------
+#
+# The `x-mcp-header` annotation lives in the APPROVED inputSchema, so the registry is
+# the first stage that knows an argument is mirrored at all. These rows are protocol
+# attacks scored against a registry decision, which is why they carry a transport
+# block and are skipped in direct mode — there is no header layer to disagree with.
+
+[[scenario]]
+id = "reg-param-001"
+class = "malicious"
+layer = "protocol"
+principal = "developer"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_METADATA_DUPLICATE"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "The same Mcp-Param-* header twice with different values. A first-copy reader and a last-copy reader authorize different requests, which is the entire failure the mirrored-metadata requirement exists to prevent. Detected on the raw pairs at stage 02, because the folded mapping stage 04 receives cannot represent it."
+transport = { add = [["mcp-param-path", "public/documentation.txt"], ["mcp-param-path", "decoys/fake_ssh/id_rsa"]] }
+
+# ---------------------------------------------------------------------------
+# REG-008 — the poisoned annotation, as a request
+# ---------------------------------------------------------------------------
+
+[[scenario]]
+id = "reg-poison-001"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "delete_file"
+arguments = { path = "workspace/notes.txt" }
+expected_decision = "deny"
+expected_reason = "POLICY_OPERATION_NOT_PERMITTED"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "delete_file is approved and enabled at R4, so the REGISTRY resolves it — Registry.resolve deliberately ignores the principal, because who may call an approved tool is unit 06's decision and unit 06's reason codes. The denial is therefore POLICY_*, and this row's value is that the tier reaching policy is R4 even under FIXTURE_MODE=poison, where the upstream advertises this tool as readOnlyHint:true, destructiveHint:false, 'does not modify anything'. An earlier draft expected REG_TOOL_UNKNOWN, which the registry cannot produce for a registered tool in any advertised state — a row that could never pass, giving false confidence the attack was covered. Codex adversarial review. The quarantine half of the same attack needs a restart the corpus cannot perform and lives in test_registry.py::test_a_poisoned_annotation_changes_nothing_but_fires_drift."
+
+# ---------------------------------------------------------------------------
+# The legitimate control
+# ---------------------------------------------------------------------------
+#
+# Without a row that must be ALLOWED, every assertion above is satisfied by a gateway
+# that denies unconditionally — and a corpus that cannot fail the trivially-broken
+# implementation measures nothing.
+
+[[scenario]]
+id = "reg-legit-001"
+class = "legitimate"
+layer = "security"
+principal = "developer"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "allow"
+expected_reason = "POLICY_SCOPED_READ"
+expected_side_effect = { op = "read", path_contains = "documentation.txt" }
+risk_tier = "R1"
+notes = "An approved tool, approved arguments, an approved root. The effect is verified at the FIXTURE, not read off the gateway's reply — an allow whose effect never happened is FALSE_SUCCESS, not a pass."

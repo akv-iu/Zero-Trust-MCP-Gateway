@@ -21,7 +21,7 @@ import httpx
 import pytest
 
 from fixtures.build_tree import build
-from gateway import config as cfgmod
+from gateway import startup
 from gateway.audit import AuditBuilder, AuditSink, read_events
 from gateway.bridge import upstream
 from gateway.config import EdgeConfig
@@ -58,8 +58,11 @@ async def test_http_request_reaches_the_real_fixture_and_is_audited(env: Path) -
     sink = AuditSink(env / "audit.jsonl")
     sink.open()
 
-    shipped = cfgmod.load(REPO / "config" / "gateway.toml")
-    child = shipped.child.model_copy(
+    shipped, reg = startup.load_all(REPO / "config" / "gateway.toml")
+    # Launch parameters come from the REGISTRY now (REG-002); `[child]` carries only
+    # bridge tuning. Only the interpreter is substituted, because a bare `python`
+    # need not be on PATH in every CI image.
+    child = reg.server.child_config(shipped.child).model_copy(
         update={"executable": sys.executable, "cwd": str(REPO)}
     )
 
@@ -143,8 +146,11 @@ async def test_edge_rejects_before_the_child_is_touched(env: Path) -> None:
     import uvicorn
 
     port = free_port()
-    shipped = cfgmod.load(REPO / "config" / "gateway.toml")
-    child = shipped.child.model_copy(
+    shipped, reg = startup.load_all(REPO / "config" / "gateway.toml")
+    # Launch parameters come from the REGISTRY now (REG-002); `[child]` carries only
+    # bridge tuning. Only the interpreter is substituted, because a bare `python`
+    # need not be on PATH in every CI image.
+    child = reg.server.child_config(shipped.child).model_copy(
         update={"executable": sys.executable, "cwd": str(REPO)}
     )
 

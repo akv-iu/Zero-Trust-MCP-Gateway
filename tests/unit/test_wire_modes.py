@@ -24,7 +24,7 @@ import pytest
 
 from fixtures.build_tree import build
 from fixtures.filesystem_server import modes
-from gateway import config as cfgmod
+from gateway import startup
 from gateway.bridge import upstream
 from gateway.config import ChildConfig
 from gateway.errors import ReasonCode, RouteDenial
@@ -118,7 +118,8 @@ def wrapped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     def make(mode: str) -> ChildConfig:
         monkeypatch.setenv("FIXTURE_MODE", mode)
-        return cfgmod.load(REPO / "config" / "gateway.toml").child.model_copy(
+        cfg, reg = startup.load_all(REPO / "config" / "gateway.toml")
+        return reg.server.child_config(cfg.child).model_copy(
             update={
                 "executable": sys.executable,
                 "cwd": str(REPO),

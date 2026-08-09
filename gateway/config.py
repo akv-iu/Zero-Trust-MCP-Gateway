@@ -40,18 +40,42 @@ class EdgeConfig(BaseModel):
         return self
 
 
-class ChildConfig(BaseModel):
-    """01 — upstream stdio child. Values mirror the registry entry (BRIDGE-007)."""
+class ChildTuning(BaseModel):
+    """01 — `[child]` in gateway.toml. Bridge-owned values ONLY.
+
+    The launch parameters — executable, argv, cwd, environment allowlist — are NOT
+    here. They live in `config/registry.toml` and nowhere else (REG-002: "unit 01
+    takes its launch parameters from here and only here").
+
+    They used to be duplicated in this section, kept equal by a test. A test that
+    compares two copies does not make one of them the source: a deployment that
+    edited only one would fingerprint one process and run another, and the check
+    would pass right up until the two files disagreed. `extra="forbid"` now makes
+    the old keys a startup failure rather than a silently-ignored second opinion.
+
+    Timeouts and buffer sizes stay: they are how the BRIDGE behaves, not what the
+    upstream is, and the registry has no business describing them.
+    """
 
     model_config = _FROZEN
+
+    startup_timeout_s: float = 10.0
+    shutdown_grace_s: float = 5.0
+    stderr_capture_lines: int = 256
+
+
+class ChildConfig(ChildTuning):
+    """What `bridge.upstream` consumes: tuning plus the registry's launch parameters.
+
+    Never loaded from TOML. Built by `registry.ServerEntry.child_config(tuning)`,
+    which is the only constructor, so there is exactly one runtime path from an
+    approved registry entry to a spawned process.
+    """
 
     executable: str
     args: tuple[str, ...] = ()
     cwd: str
     env_allowlist: tuple[str, ...] = ("PATH",)
-    startup_timeout_s: float = 10.0
-    shutdown_grace_s: float = 5.0
-    stderr_capture_lines: int = 256
 
 
 class ProtocolConfig(BaseModel):
@@ -186,7 +210,7 @@ class Config(BaseModel):
 
     registry_path: str = "config/registry.toml"
     edge: EdgeConfig = Field(default_factory=EdgeConfig)
-    child: ChildConfig
+    child: ChildTuning = Field(default_factory=ChildTuning)
     protocol: ProtocolConfig = Field(default_factory=ProtocolConfig)
     identity: IdentityConfig
     canonicalize: CanonicalizeConfig
@@ -216,10 +240,13 @@ class Config(BaseModel):
         as the request path, so a containment bug shows up here too.
         """
         roots = [Path(r.path).resolve() for r in self.canonicalize.roots]
+        # The child's cwd used to be listed here. It comes from the registry now
+        # (REG-002) and `self_check` deliberately reads only what THIS file owns —
+        # a config method reaching into the registry to validate itself is how the
+        # two get coupled again.
         protected = [
             Path(self.registry_path),
             Path(self.audit.path),
-            Path(self.child.cwd) / "..",
         ]
         for p in protected:
             rp = p.resolve()

@@ -389,7 +389,9 @@ def test_no_token_shaped_field_exists_to_forward() -> None:
 def test_the_child_environment_carries_no_provider_key() -> None:
     """AGENT-005 / BRIDGE-006, asserted from the identity side too: the upstream is a
     local child needing no credential, so nothing secret-shaped may be allowlisted."""
-    allowlist = cfgmod.load(REPO / "config" / "gateway.toml").child.env_allowlist
+    from gateway import startup
+
+    allowlist = startup.load_all(REPO / "config" / "gateway.toml")[1].server.env_allowlist
     assert not any(
         w in name.upper() for name in allowlist for w in ("KEY", "TOKEN", "SECRET")
     )

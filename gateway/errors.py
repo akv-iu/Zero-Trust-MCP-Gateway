@@ -73,7 +73,6 @@ class ReasonCode(StrEnum):
     # before any release, so CONV-008's no-meaning-change rule is not engaged.
 
     # -- 04 registry -------------------------------------------------------
-    REG_SERVER_UNKNOWN = "REG_SERVER_UNKNOWN"
     REG_SERVER_UNAVAILABLE = "REG_SERVER_UNAVAILABLE"
     REG_TOOL_UNKNOWN = "REG_TOOL_UNKNOWN"
     REG_TOOL_QUARANTINED = "REG_TOOL_QUARANTINED"
@@ -81,7 +80,25 @@ class ReasonCode(StrEnum):
     REG_SCHEMA_UNVERIFIED = "REG_SCHEMA_UNVERIFIED"
     REG_ARGS_INVALID = "REG_ARGS_INVALID"
     REG_ARGS_UNKNOWN_FIELD = "REG_ARGS_UNKNOWN_FIELD"
-    REG_HEADER_ANNOTATION_INVALID = "REG_HEADER_ANNOTATION_INVALID"  # ADR-001 §3.1
+    #
+    # REG_SERVER_UNKNOWN and REG_HEADER_ANNOTATION_INVALID were removed when unit 04
+    # landed, for the reason that removed IDENT_CONTEXT_UNAVAILABLE: neither had a
+    # request-time raise path, and CONV-010 requires every code to be reachable by a
+    # corpus scenario.
+    #
+    #   REG_SERVER_UNKNOWN — v1 has exactly one upstream and NO MCP message carries a
+    #   server identifier, so REG-001 ("an unregistered server identifier is a
+    #   denial") is satisfied by there being no field in which to ask. Multi-upstream
+    #   revives it; the trigger is in `_specs/90-deferred-register.md` §10c.
+    #
+    #   REG_HEADER_ANNOTATION_INVALID — an approved schema carrying an invalid
+    #   `x-mcp-header` is refused at LOAD, so the gateway does not start (ADR-001
+    #   §3.1). Startup failures are `ConfigError`, whose docstring already says it
+    #   never reaches a request path; giving one a ReasonCode implies a wire shape
+    #   and an audit record that can never exist.
+    #
+    # Both removed before any release, so CONV-008's no-meaning-change rule is not
+    # engaged. Adding either back requires the raise path in the same change.
 
     # -- 05 canonicalizer --------------------------------------------------
     CANON_ENCODING_INVALID = "CANON_ENCODING_INVALID"

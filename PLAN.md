@@ -133,8 +133,8 @@ Ordered so that each step is runnable and testable the day it lands. Nothing is 
 | 4 | `09-svc-audit-log` | — | Every passthrough writes one JSONL event | **done** |
 | 5 | `02-svc-protocol-guard` | 01, 09 | Malformed JSON-RPC and header/body mismatch rejected + audited | **done** |
 | 6 | `03-svc-identity-resolver` | 09 | Principal appears in the audit event, labelled `local_config`. Acceptance tests 1–5 and 7 pass; **test 6 is deferred to unit 06** — it asserts two principals produce different *decisions*, and there is no policy engine yet | **done** |
-| 7 | `04-svc-registry` | 02, 09 | Unregistered server/tool denied; schema fingerprint recorded | next |
-| 8 | `05-svc-canonicalizer-fs` | 04 | Traversal/encoding/symlink cases resolve to a canonical path or reject | |
+| 7 | `04-svc-registry` | 02, 09 | Unregistered server/tool denied; schema fingerprint recorded. Drift and the poisoned annotation demonstrated against the **live** fixture in `FIXTURE_MODE=drift` / `=poison`, through real startup. `gateway/startup.py` runs `verify_schemas` before readiness and checks `expected_protocol_version`. Launch parameters live only in `config/registry.toml`. Four `REG_*` codes are startup-conditioned and unreachable from a corpus row until unit 11 can launch a per-scenario gateway — [90 §10c](_specs/90-deferred-register.md) | **done** |
+| 8 | `05-svc-canonicalizer-fs` | 04 | Traversal/encoding/symlink cases resolve to a canonical path or reject. Also owes: stages 05/06 must handle the tool-less R0 target `registry.resolve` returns for `tools/list` | next |
 | 9 | `06-svc-policy-broker` | 03, 04, 05, 09 | OPA allow/deny with reason code; OPA killed → all protected calls denied; **carries spec-03 test 6** (two principals → different decisions, same request) and publishes `IdentityConfig.role_vocabulary` to OPA as data rather than duplicating it | |
 | 10 | `07-svc-upstream-router` | 06, 10 | Only allowed calls reach the fixture; obligations enforced | |
 | 11 | `08-svc-response-guard` | 07 | Oversized/mismatched upstream responses become controlled errors | |

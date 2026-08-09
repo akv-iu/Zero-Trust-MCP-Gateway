@@ -1,0 +1,121 @@
+# The default-deny surface. Nothing routes, executes, or appears in tools/list
+# unless it is written here (REG-001, REG-003).
+#
+# CONV-013: any key not in gateway/registry.py FAILS STARTUP. Nothing is ignored.
+#
+# schema_fingerprint covers the tool as the upstream ADVERTISES it: name,
+# description, inputSchema, outputSchema, annotations. input_schema below is what
+# the gateway VALIDATES against, and it is deliberately a different document — the
+# SDK derives its listing from a handler signature and emits a generated title and
+# no additionalProperties, while an approved schema must be closed (REG-013).
+# Pinning our own is the whole of REG-014.
+#
+# To re-approve after a deliberate upstream change:
+#     python -m scripts.fingerprint_tools --check     # what differs
+#     python -m scripts.fingerprint_tools             # the blocks to paste
+# Never auto-update from the upstream: comparing the upstream to a copy of the
+# upstream always agrees, and drift detection becomes decorative.
+#
+# risk_tier is the REGISTRY's judgement and the upstream has no say in it. A tool
+# advertising {"readOnlyHint": true} changes its fingerprint and quarantines; it
+# does not change the tier (REG-008).
+
+[[server]]
+id = "filesystem-fixture"
+transport = "stdio"
+executable = "python"
+args = ["-m", "fixtures.filesystem_server.server"]
+cwd = "."
+env_allowlist = [
+  "PATH", "PYTHONPATH", "SYSTEMROOT", "COMSPEC",
+  "FIXTURE_ROOT", "FIXTURE_OPLOG", "FIXTURE_MODE",
+  "FIXTURE_ALLOW_WEAK_ISOLATION", "FIXTURE_ISOLATION_TIER",
+]
+expected_protocol_version = "2026-07-28"
+state = "enabled"
+owner = "akshay"
+review_date = "2026-08-09"
+
+  [[server.tool]]
+  name = "read_file"
+  risk_tier = "R1"
+  operation = "read"
+  enabled = true
+  schema_fingerprint = "v2:6b708482f57503d9eac9384045aaec5d61a037e5eb476d130b17767909d4adc1"
+  approved_for = "Read one UTF-8 text file inside an approved root"
+  input_schema = """
+  {"type":"object","additionalProperties":false,
+   "required":["path"],
+   "properties":{"path":{"type":"string","maxLength":4096}}}
+  """
+
+  [[server.tool]]
+  name = "list_directory"
+  risk_tier = "R0"
+  operation = "read"
+  enabled = true
+  schema_fingerprint = "v2:0181578c495d6b23fe7e5aded899321c375e1404cc94fcb7dc19e211c8b3d134"
+  approved_for = "List the entries of a directory inside an approved root"
+  input_schema = """
+  {"type":"object","additionalProperties":false,
+   "required":[],
+   "properties":{"path":{"type":"string","maxLength":4096}}}
+  """
+
+  [[server.tool]]
+  name = "stat_file"
+  risk_tier = "R0"
+  operation = "read"
+  enabled = true
+  schema_fingerprint = "v2:1fa4ca3ef1933200e6a569575b95541df28cfa539b8371747a376fcc17142cc6"
+  approved_for = "Return size, mtime and directory flag for a path"
+  input_schema = """
+  {"type":"object","additionalProperties":false,
+   "required":["path"],
+   "properties":{"path":{"type":"string","maxLength":4096}}}
+  """
+
+  [[server.tool]]
+  name = "write_file"
+  risk_tier = "R2"
+  operation = "overwrite"
+  enabled = true
+  schema_fingerprint = "v2:9c0a544b46d349d1b070097677d26139d69a07faacd186e6fd0ad3e14ab13f55"
+  approved_for = "Create or overwrite a text file inside a writable approved root"
+  input_schema = """
+  {"type":"object","additionalProperties":false,
+   "required":["path","content"],
+   "properties":{"path":{"type":"string","maxLength":4096},
+                 "content":{"type":"string","maxLength":1048576}}}
+  """
+
+  [[server.tool]]
+  name = "append_file"
+  risk_tier = "R2"
+  operation = "append"
+  enabled = true
+  schema_fingerprint = "v2:544ae99d37e52f0bf3ab71bbe600ba7c98428f044d8aa7933915612ad1718fb2"
+  approved_for = "Append text to a file inside a writable approved root"
+  input_schema = """
+  {"type":"object","additionalProperties":false,
+   "required":["path","content"],
+   "properties":{"path":{"type":"string","maxLength":4096},
+                 "content":{"type":"string","maxLength":1048576}}}
+  """
+
+  # R4, and it stays R4 no matter what the upstream advertises. FIXTURE_MODE=poison
+  # makes this tool claim {"readOnlyHint": true, "destructiveHint": false} with a
+  # description saying it modifies nothing. That changes the fingerprint and
+  # quarantines the tool; the tier below is untouched (spec-04 test 4).
+  [[server.tool]]
+  name = "delete_file"
+  risk_tier = "R4"
+  operation = "delete"
+  enabled = true
+  schema_fingerprint = "v2:c7661cc27b38ae32a024a8eb10533380b7a01e211e688408e6425b90bb944e0d"
+  approved_for = "Delete one file inside an approved root that permits deletion"
+  input_schema = """
+  {"type":"object","additionalProperties":false,
+   "required":["path"],
+   "properties":{"path":{"type":"string","maxLength":4096}}}
+  """

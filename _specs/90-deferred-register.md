@@ -148,6 +148,60 @@ is documented as a limitation in `docs/threat-model.md`, not silently carried.
 
 ---
 
+## 10c. Registry codes no corpus row can reach
+
+Four `REG_*` codes are decided by the gateway's **startup state**, not by the content
+of a request, and a corpus scenario describes a request. They are covered by
+`tests/unit/test_registry.py` against the real fixture in `FIXTURE_MODE=drift` and
+`FIXTURE_MODE=poison` — same upstream, same comparison — until unit 11's protected
+client can launch a differently-configured gateway per row.
+
+| Code | Decided by | Covered today by |
+|---|---|---|
+| `REG_SCHEMA_DRIFT` | `verify_schemas` at handshake | `test_drift_quarantines_the_tool_and_hides_it` |
+| `REG_TOOL_QUARANTINED` | the per-request consequence of the above | same test, plus the poisoned-annotation test |
+| `REG_SERVER_UNAVAILABLE` | `state` in `config/registry.toml` | `test_a_disabled_server_hides_every_tool` |
+| `REG_SCHEMA_UNVERIFIED` | a call arriving before the handshake | `test_nothing_is_callable_before_verification`, `test_tools_list_is_refused_before_verification` |
+
+`REG_HEADER_ANNOTATION_INVALID` and `REG_SERVER_UNKNOWN` were **removed** from
+`ReasonCode`, not deferred — neither had a request-time raise path, which CONV-010
+forbids, and the same rule removed `IDENT_CONTEXT_UNAVAILABLE` when unit 03 landed.
+
+| Code | Why it had no raise path | Trigger to add it back |
+|---|---|---|
+| `REG_HEADER_ANNOTATION_INVALID` | An approved schema with an invalid `x-mcp-header` is refused at LOAD (ADR-001 §3.1), so the gateway does not start. Startup failures are `ConfigError`, which never reaches a request path; a reason code implies a wire shape and an audit record that cannot exist | Never as a request outcome. If a future tool set is approved dynamically, the code returns with the raise path in the same change |
+| `REG_SERVER_UNKNOWN` | v1 has exactly one upstream and no MCP message carries a server identifier, so REG-001 is satisfied by there being no field in which to ask | Multi-upstream (§6, "Router isolation, per-server pools") |
+
+An earlier draft kept `REG_SERVER_UNKNOWN` on the argument that it is unreachable
+*because* the topology has one element, rather than meaningless. That distinction is
+real and it is not the rule: CONV-010 asks whether a scenario can reach the code, not
+why it cannot. Adding it back requires the raise path in the same change.
+
+**Trigger for all of the above:** unit 11's `ProtectedClient` gaining the ability to
+launch a gateway with a per-scenario registry and `FIXTURE_MODE`.
+
+---
+
+## 10d. Launch parameters — RESOLVED, not deferred
+
+Recorded here because the register named it as a cut and it is no longer one.
+
+`config/gateway.toml [child]` no longer carries `executable`, `args`, `cwd` or
+`env_allowlist`. Those live in `config/registry.toml` only (REG-002), and
+`ChildTuning` — the model behind `[child]` — forbids them, so putting one back fails
+startup instead of becoming a silent second opinion. `ServerEntry.child_config(tuning)`
+is the only constructor for a launchable `ChildConfig`.
+
+The previous entry closed this with a test comparing the two copies. That was the
+wrong shape and Codex said so: a comparison does not make either copy the source, and
+it passes right up until the files disagree — at which point it reports a mismatch
+rather than having prevented one.
+
+**Still open:** `executable = "python"` and `cwd = "."` are launcher-relative. Making
+them explicit paths is unit 11's, where real startup is assembled.
+
+---
+
 ## 11. Kept in v1 despite being cuttable
 
 Recorded so they are not cut in a later round of enthusiasm:

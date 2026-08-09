@@ -28,7 +28,7 @@ class Deps:
     """Assembled once at startup. No globals, no service locator, no DI framework."""
 
     config: Config
-    registry: Any  # registry.Registry — unit 04
+    registry: registry.Registry
     opa: Any  # httpx.AsyncClient — unit 06
     upstream: Any  # UpstreamHandle — unit 01
     audit: AuditSink  # unit 09
@@ -47,12 +47,21 @@ async def handle(env: RawEnvelope, deps: Deps) -> Untrusted[JsonObject]:
         builder.set(**identity.audit_fields(ctx))
         with builder.stage(Stage.REGISTRY):
             tgt = registry.resolve(req, ctx, deps.registry)
+        builder.set(**registry.audit_fields(tgt))
         with builder.stage(Stage.CANONICAL):
             drv = canonicalize.derive(req, tgt, deps.config.canonicalize)
         with builder.stage(Stage.POLICY):
             dec = await policy.evaluate(req, ctx, tgt, drv, deps.opa, deps.config.policy)
         if dec.decision != "allow":
             raise PolicyDenial(ReasonCode(dec.reason_code))
+        if dec.risk_tier != tgt.registry_risk_tier:
+            # The registry assigns the tier; policy must carry the same one. Stage 04
+            # writes `risk_tier` into the record and stage 06 writes it again, and
+            # `AuditBuilder.set` updates — so without this line a policy result
+            # claiming R0 for an R4 tool would both authorise the call and leave an
+            # audit record showing only R0, erasing the divergence it caused. A
+            # comment saying "unit 06 must agree" is not enforcement (Codex review).
+            raise PolicyDenial(ReasonCode.POLICY_RESULT_INVALID)
         with builder.stage(Stage.ROUTE):
             raw = await router.forward(req, drv, dec, deps.upstream, deps.config.router)
         with builder.stage(Stage.RESPONSE):

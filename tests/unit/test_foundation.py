@@ -28,7 +28,7 @@ from gateway.errors import (
     safe_message,
     wire_shape,
 )
-from gateway.hashing import canonical_json, fingerprint, hash_obj
+from gateway.hashing import FINGERPRINT_VERSION, canonical_json, fingerprint, hash_obj
 from gateway.timing import StageTimer
 from gateway.types import (
     AuthzContext,
@@ -127,7 +127,7 @@ def test_nan_and_infinity_are_rejected() -> None:
 
 
 def test_fingerprint_is_version_prefixed() -> None:
-    assert fingerprint({"a": 1}).startswith("v1:")
+    assert fingerprint({"a": 1}).startswith(f"{FINGERPRINT_VERSION}:")
 
 
 # --- frozen types -------------------------------------------------------------

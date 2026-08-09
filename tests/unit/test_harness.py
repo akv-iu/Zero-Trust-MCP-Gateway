@@ -473,5 +473,39 @@ def test_negative_control_pinpoints_the_leak(sandbox: Path, oracle: Oracle) -> N
     assert all(r.detail.startswith("prohibited side effect") for r in critical)
 
 
+def test_every_destructive_scenario_targets_a_file_that_exists() -> None:
+    """A scenario whose target is not there demonstrates nothing.
+
+    `proto-split-001` deleted `workspace/notes.md`; the tree has `notes.txt`. In
+    `direct` mode — the undefended baseline — that row scored FAIL ("the call
+    errored") instead of CRITICAL ("a file was destroyed"), so the attack it exists
+    to publish was never shown to work. It went unnoticed because the row carries a
+    `transport` block and is SKIPPED in direct mode, which is exactly the corner
+    where nobody looks. Found while adding the registry corpus.
+
+    Deliberately narrow: it applies only to tools that need an EXISTING file, and
+    only to paths carrying no traversal or encoding material. Every traversal row
+    names something outside the tree on purpose, and `write_file` creates its target.
+    """
+    from fixtures.manifest import TREE
+
+    needs_a_real_file = {"read_file", "stat_file", "delete_file", "append_file"}
+    deliberately_absent = ("..", "%2", "\x00", "\r", "\n", "traps/")
+
+    missing = [
+        (s.id, s.tool, path)
+        for s in scen.load().scenarios
+        if s.tool in needs_a_real_file
+        and (path := s.arguments.get("path")) is not None
+        and not any(marker in path for marker in deliberately_absent)
+        and path.replace("\\", "/").split("/")[0] in {p.split("/")[0] for p in TREE}
+        and path not in TREE
+    ]
+    assert missing == [], (
+        f"scenarios target files the fixture tree does not contain: {missing}. In "
+        "direct mode these cannot cause the damage the row claims to demonstrate."
+    )
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

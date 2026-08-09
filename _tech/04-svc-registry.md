@@ -75,7 +75,7 @@ def fingerprint(tool: dict) -> str:
 
 Rules that make this stable and non-surprising:
 
-- **Absent and null collapse to a typed empty** (`""`, `{}`). Otherwise an upstream that starts emitting `"description": null` where it previously omitted the key produces a spurious drift event.
+- **Null collapses to absent. Present-and-empty does NOT.** ~~Absent and null collapse to a typed empty (`""`, `{}`).~~ The justification for collapsing was only ever the null case: an upstream that starts emitting `"description": null` where it previously omitted the key must not produce a spurious drift event. Substituting a typed empty went further and made an *absent* `outputSchema` hash identically to a *present empty* one, so an upstream could add or remove `"outputSchema": {}` undetected — while REG-005 says to fingerprint the output schema **where present**, making presence part of what is pinned. Corrected during unit 04's review; the key is simply omitted when the value is absent or null, and included otherwise.
 - `hash_obj` uses `sort_keys=True`, so key order is irrelevant — spec test 5.
 - The `"v1:"` prefix is the normalization version. Changing the rule bumps it, and every stored fingerprint must be regenerated deliberately.
 - **Include `annotations`.** They must not influence decisions (`REG-008`), but they must be fingerprinted — that is what makes the poisoned-annotation demo (spec test 4) fire.
@@ -128,7 +128,7 @@ self._validators = {
 
 Compile at load so a malformed schema fails startup rather than the first request. Use `iter_errors` and deny on the first — do not aggregate; error detail is diagnostic-only anyway (`CONV-009`).
 
-**`additionalProperties: false` is mandatory in every approved schema** (`REG-013`). Enforce it at load rather than trusting authors:
+**`additionalProperties: false` is mandatory at EVERY object-valued schema position, not just the root** (`REG-013`). Checking only the root lets `{"opts": {"type": "object"}}` through, and `{"opts": {"sudo": true}}` then validates — attacker keys inside an approved argument. `registry._first_open_object` walks `properties`, `patternProperties`, `$defs`, `allOf`/`anyOf`/`oneOf`/`prefixItems`, and `items`/`not`/`if`/`then`/`else`/`contains`, and returns the offending path so the startup error names it. Enforce at load rather than trusting authors:
 
 ```python
 @field_validator("input_schema")
