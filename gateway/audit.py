@@ -40,6 +40,14 @@ _RECORD: TypeAdapter[AuditRecord] = TypeAdapter(AuditRecord)
 
 #: Reason code -> terminal outcome. Collapsing these would destroy the evidence the
 #: report depends on: a cancelled request and a denied one mean different things.
+#:
+#: The default for anything absent is `denied`, and that default is only correct for
+#: codes that represent a DECISION. Every `RESP_*` code is listed below because none of
+#: them is one: an oversized, malformed, wrongly-shaped or MRTR-carrying response is
+#: the upstream misbehaving after the gateway already allowed the call. Recording those
+#: as `denied` inflated the denial count in the report with requests policy had
+#: permitted, and made the security rate read as if the gateway had refused something
+#: (review finding). They are errors, and the reason code says which kind.
 _OUTCOME_BY_CODE: dict[ReasonCode, Outcome] = {
     ReasonCode.ROUTE_CANCELLED: "cancelled",
     ReasonCode.ROUTE_TIMEOUT: "timeout",
@@ -49,6 +57,12 @@ _OUTCOME_BY_CODE: dict[ReasonCode, Outcome] = {
     ReasonCode.AUDIT_SCHEMA_INVALID: "error",
     ReasonCode.ROUTE_UPSTREAM_UNAVAILABLE: "error",
     ReasonCode.POLICY_UNAVAILABLE: "error",
+    ReasonCode.RESP_ENVELOPE_INVALID: "error",
+    ReasonCode.RESP_TOO_LARGE: "error",
+    ReasonCode.RESP_LIMIT_EXCEEDED: "error",
+    ReasonCode.RESP_SHAPE_INVALID: "error",
+    ReasonCode.RESP_MRTR_UNSUPPORTED: "error",
+    ReasonCode.RESP_UNSOLICITED: "error",
 }
 
 

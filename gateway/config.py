@@ -237,12 +237,23 @@ class RouterConfig(BaseModel):
 
 
 class ResponseConfig(BaseModel):
-    """08. Deliberately looser than protocol limits — results are bigger than requests."""
+    """08. Deliberately looser than protocol limits — results are bigger than requests.
+
+    Satisfies `protocol.StructuralLimits`, which is what lets one walk bound both
+    directions (RESP-004). Adding a field here that the protocol side lacks, or
+    renaming one, breaks that structurally rather than subtly.
+    """
 
     model_config = _FROZEN
 
     max_bytes: int = 4_194_304
     max_depth: int = 32
+    max_object_keys: int = 5_000
+    """Keys in ONE object, as `[protocol]` bounds them and for the same reason: a
+    single object with 19,999 keys passes a 20,000-field budget while being exactly
+    the shape that makes a downstream consumer quadratic. Ten times the request limit,
+    because a `tools/list` result legitimately carries wide schema objects and a
+    request never does."""
     max_array_length: int = 10_000
     max_string_length: int = 1_048_576
     max_total_fields: int = 20_000

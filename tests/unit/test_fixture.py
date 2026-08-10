@@ -263,13 +263,48 @@ def test_oversized_mode_returns_a_huge_result() -> None:
     assert len(modes.apply_to_result("oversized", "small")) == 100 * 1024 * 1024
 
 
-def test_pathological_mode_is_deep_and_wide() -> None:
-    r = modes.apply_to_result("pathological", None)
-    assert len(r["wide"]) == 200_000
-    d, depth = r["deep"], 0
+def test_pathological_mode_is_deep_and_wide_on_the_WIRE() -> None:
+    """It moved from `apply_to_result` to `apply_to_wire`, and the move is the point.
+
+    Returned from the tool body, a 2,000-deep structure never left the fixture:
+    `MCPServer` refused to serialize it and the gateway received a 302-byte
+    `isError: true` saying so, which unit 08 rightly treats as an ordinary tool
+    failure. The mode that exists to attack the response guard reached it in no run.
+    """
+    import json as _json
+
+    line = _json.dumps({"jsonrpc": "2.0", "id": 7, "result": {"content": []}}).encode()
+    out = modes.apply_to_wire("pathological", line, {7})
+    assert len(out) == 1
+    payload = _json.loads(out[0])["result"]["_meta"]
+
+    assert len(payload["wide"]) == 200_000
+    d, depth = payload["deep"], 0
     while isinstance(d, dict):
         d, depth = d["n"], depth + 1
-    assert depth == 2000
+    assert depth == modes.PATHOLOGICAL_DEPTH == 50
+
+
+def test_pathological_lands_in_the_one_slot_the_sdk_will_carry() -> None:
+    """Measured, not assumed, and two obvious slots were wrong.
+
+    `content` blocks are typed models, so a nested blob there is refused by the SDK.
+    `structuredContent` looks like the arbitrary-JSON slot and is not — the SDK
+    validates it against the TOOL'S declared output schema, and `read_file` declares
+    `{"result": "string"}`. `_meta` is the one place MCP genuinely leaves open.
+
+    Each wrong slot fails one layer BEFORE unit 08, which is indistinguishable from
+    the guard working.
+    """
+    import json as _json
+
+    line = _json.dumps(
+        {"jsonrpc": "2.0", "id": 1, "result": {"content": [], "resultType": "tools/call"}}
+    ).encode()
+    result = _json.loads(modes.apply_to_wire("pathological", line, {1})[0])["result"]
+    assert "deep" in result["_meta"]
+    assert result["content"] == [], "the typed content blocks must stay valid"
+    assert "structuredContent" not in result, "the output schema would refuse it there"
 
 
 def test_inject_mode_returns_instruction_shaped_text() -> None:

@@ -961,3 +961,44 @@ def test_the_audit_contribution_carries_a_hash_not_the_body() -> None:
         protocol.validate(envelope(body(arguments=secret)), CFG)
     )
     assert "salaries" not in json.dumps(fields)
+
+
+def test_the_walk_and_the_prescan_agree_on_the_depth_boundary() -> None:
+    """Two limits with one name must not disagree about where the boundary is.
+
+    `prescan` counts CONTAINERS over raw bytes; the walk once counted every node,
+    including scalars, so it was one level stricter for the same document. A request
+    at exactly `max_depth` passed the byte scan and was then rejected after parsing —
+    the kind of disagreement that reads as a mysterious intermittent rejection rather
+    than as a limit doing its job. Found in review.
+    """
+    import json as _json
+
+    from gateway.config import ProtocolConfig
+    from gateway.protocol import check_limits, prescan
+
+    cfg = ProtocolConfig(max_depth=4)
+
+    at_limit: Any = "leaf"
+    for _ in range(cfg.max_depth):
+        at_limit = {"n": at_limit}
+    over_limit = {"n": at_limit}
+
+    for label, doc in (("at the limit", at_limit), ("one over", over_limit)):
+        body = _json.dumps(doc).encode()
+        scan_ok = True
+        try:
+            prescan(body, cfg)
+        except ProtocolDenial:
+            scan_ok = False
+        walk_ok = True
+        try:
+            check_limits(doc, cfg)
+        except ProtocolDenial:
+            walk_ok = False
+        assert scan_ok == walk_ok, (
+            f"{label}: prescan {'accepted' if scan_ok else 'rejected'} but the walk "
+            f"{'accepted' if walk_ok else 'rejected'}"
+        )
+
+    assert check_limits(at_limit, cfg) is None, "a document AT the limit must pass"

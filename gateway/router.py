@@ -83,7 +83,6 @@ _LIST_METHOD: Final = "tools/list"
 _STATUS_BY_CODE: Final[dict[ReasonCode, str]] = {
     ReasonCode.ROUTE_TIMEOUT: "timeout",
     ReasonCode.ROUTE_UPSTREAM_UNAVAILABLE: "unavailable",
-    ReasonCode.ROUTE_RESPONSE_TOO_LARGE: "too_large",
     ReasonCode.ROUTE_CANCELLED: "cancelled",
     ReasonCode.ROUTE_NO_DECISION: "not_attempted",
     ReasonCode.ROUTE_AUTHORIZATION_DIVERGENCE: "not_attempted",
@@ -399,10 +398,24 @@ async def _bounded(call: Awaitable[Any], ob: Obligations) -> tuple[Any, int]:
 
 
 def _measure(content: Any, is_error: bool, elapsed_ns: int, ob: Obligations) -> RawResult:
-    """Size the response, enforce the ceiling, hand the rest to unit 08.
+    """Size the response and hand it on. The CEILING is unit 08's (RESP-003).
 
-    See the module docstring for why this is a post-hoc measurement and what that
-    changes about the claim.
+    This measures and does not enforce, and the difference is the whole of the review
+    finding behind it. ROUTE-006 asks for a STREAMING abort — stop reading once the
+    ceiling is crossed — which the SDK forecloses (see the module docstring). What was
+    built instead was a post-parse measurement compared against the obligation, one
+    stage before unit 08 compared the identical number against the identical limit.
+
+    Two checks of the same quantity at the same moment are not two layers. Worse, the
+    earlier one won every time, so `RESP_TOO_LARGE` could not occur in production while
+    its unit test passed against a `RawResult` the router would never return — a code
+    in the published vocabulary that no request could reach, which is what CONV-010
+    exists to prevent. `ROUTE_RESPONSE_TOO_LARGE` was removed with the check; the
+    surviving enforcement is unit 08's, where the parsed structure is and where the
+    requirement that can actually be met was written.
+
+    `ob` is still taken: it is what unit 08 will enforce against, and dropping the
+    parameter would hide that this function deliberately declines to.
 
     A tool returning `isError: true` is a SUCCESSFUL round trip with an error result,
     not a router failure — so it is passed through with its own status rather than
@@ -411,12 +424,6 @@ def _measure(content: Any, is_error: bool, elapsed_ns: int, ob: Obligations) -> 
     """
     size = len(hashing.canonical_json(content))
     audit().set(response_bytes=size)
-    if size > ob.max_response_bytes:
-        _record("too_large", elapsed_ns)
-        raise RouteDenial(
-            ReasonCode.ROUTE_RESPONSE_TOO_LARGE,
-            detail=f"{size} bytes over {ob.max_response_bytes}",
-        )
     _record("tool_error" if is_error else "ok", elapsed_ns)
     return RawResult(
         content=content,

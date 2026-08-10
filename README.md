@@ -17,16 +17,16 @@ unit must do is in [`_specs/`](_specs/); how to build it is in [`_tech/`](_tech/
 Units built: foundation, 10 (fixture), 11 (harness skeleton), 09 (audit), 01 (HTTP
 edge + stdio upstream bridge), 02 (protocol guard), 03 (identity), 04 (registry),
 05 (filesystem canonicalizer), 06 (OPA policy broker + Rego bundle), 07 (upstream
-router). Remaining units are stubs that raise `NotImplementedError` naming their
-owner — a request reaching one is denied, never passed. Build order and state:
-[PLAN.md §4.2](PLAN.md).
+router), 08 (response guard). **The pipeline completes end to end** — a request goes
+in one end and a tool result comes out the other, against a real policy engine and a
+real child server. Build order and state: [PLAN.md §4.2](PLAN.md).
 
-**Unit 07 is built and not done.** Its acceptance tests were skipped at the author's
-instruction and are owed before it counts. It is also the unit that opens the
-side-effect path, so until unit 08 lands an allowed call reaches the child and *then*
-fails on the response guard's stub — the effect happens and the client is told the
-request failed. The write-ahead audit record added in unit 07 is what keeps that
-visible rather than silent ([threat model §2.2](docs/threat-model.md)).
+Two things to read before that sounds finished. **Unit 07's own acceptance tests are
+still owed** — they were skipped at the author's instruction, and a review then found
+two authorization bypasses that those tests would have caught (both fixed; see
+[PLAN.md §4.2](PLAN.md)). And **no corpus row is scored `protected` yet**: the
+measured security rate this project exists to publish needs unit 11's protected
+client, so every number in the corpus today is still the undefended "before".
 
 The client edge is **Streamable HTTP on loopback**; only the upstream leg to the
 child server is stdio ([ADR-001](_specs/ADR-001-transport-and-mirrored-metadata.md)).

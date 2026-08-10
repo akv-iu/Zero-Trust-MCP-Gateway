@@ -144,13 +144,51 @@ class ReasonCode(StrEnum):
     ROUTE_AUTHORIZATION_DIVERGENCE = "ROUTE_AUTHORIZATION_DIVERGENCE"
     ROUTE_UPSTREAM_UNAVAILABLE = "ROUTE_UPSTREAM_UNAVAILABLE"
     ROUTE_TIMEOUT = "ROUTE_TIMEOUT"
-    ROUTE_RESPONSE_TOO_LARGE = "ROUTE_RESPONSE_TOO_LARGE"
     ROUTE_CANCELLED = "ROUTE_CANCELLED"
+    #
+    # ROUTE_RESPONSE_TOO_LARGE was here and is GONE. ROUTE-006 asks for a STREAMING
+    # abort and the SDK forecloses one (`_specs/90` §10g), so what unit 07 actually
+    # did was measure the parsed result and compare it against the obligation — the
+    # identical number against the identical limit that unit 08 compares one stage
+    # later under RESP-003.
+    #
+    # Two checks of one quantity at one moment are not two layers, and the earlier one
+    # won every time: `RESP_TOO_LARGE` was unreachable in production while its unit
+    # test passed against a `RawResult` the router would never return. Removing the
+    # EARLIER check is what makes the surviving one real, because the survivor is the
+    # one whose requirement can actually be met — unit 08 has the parsed structure and
+    # RESP-003 asks for a post-parse ceiling rather than a stream it cannot see.
+    #
+    # Revive it with a genuine streaming abort in the same change if the gateway ever
+    # owns the child's stdout reader.
 
     # -- 08 response guard -------------------------------------------------
     RESP_ENVELOPE_INVALID = "RESP_ENVELOPE_INVALID"
-    RESP_CORRELATION_MISMATCH = "RESP_CORRELATION_MISMATCH"
     RESP_UNSOLICITED = "RESP_UNSOLICITED"
+    #
+    # RESP_CORRELATION_MISMATCH was here and is GONE, for the reason
+    # CANON_OPERATION_UNKNOWN and REG_SERVER_UNKNOWN went: no request can reach it.
+    #
+    # RESP-001 says a response whose id does not match the outbound request must be an
+    # error and never delivered. The delivered-never half holds absolutely — but the
+    # SDK, not this gateway, is what enforces it, and it does so silently. Measured
+    # against the pinned SDK with `FIXTURE_MODE=wrong_id`:
+    # `JSONRPCDispatcher._resolve_pending` looks the id up in `_pending`, finds
+    # nothing, writes `logger.debug("dropping response for unknown/late request id")`
+    # and returns. There is no callback, no exception, and no stream event — the
+    # in-flight call simply never receives an answer and dies on unit 07's obligation
+    # timeout as `ROUTE_TIMEOUT`.
+    #
+    # So the SECURITY property is satisfied and the reason code is not obtainable.
+    # Keeping it would have meant a code in the published vocabulary that no scenario
+    # can produce, which is what CONV-010 forbids; `_tech/08` §2 anticipated this and
+    # says the honest answer is to state which layer performs correlation rather than
+    # to claim the gateway does. `harness/scenarios/` records the wrong_id row as
+    # expecting ROUTE_TIMEOUT, which is what actually happens.
+    #
+    # Revive it with its raise path in the same change if the gateway ever owns the
+    # child's stdout reader — the same work that would make ROUTE-006 a streaming
+    # ceiling (`_specs/90-deferred-register.md` §10g).
     RESP_TOO_LARGE = "RESP_TOO_LARGE"
     RESP_LIMIT_EXCEEDED = "RESP_LIMIT_EXCEEDED"
     RESP_SHAPE_INVALID = "RESP_SHAPE_INVALID"

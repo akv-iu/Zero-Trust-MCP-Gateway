@@ -40,7 +40,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Mapping
-from typing import Any, Final, cast
+from typing import Any, Final, Protocol, cast
 
 from mcp.shared.inbound import (
     MCP_METHOD_HEADER,
@@ -193,37 +193,78 @@ def parse(body: bytes) -> JsonObject:
 # ===========================================================================
 
 
-def check_limits(body: Mapping[str, Any], cfg: ProtocolConfig) -> None:
-    """One ITERATIVE walk for array length, string length, and total field count.
+class StructuralLimits(Protocol):
+    """What one walk needs. `ProtocolConfig` and `ResponseConfig` both satisfy it.
+
+    RESP-004 asks for limits on the response equivalent to the ones on the request,
+    and `_tech/08` §1 is explicit that the walk must not be written twice — two walks
+    diverge, and the direction that gets the weaker one is the direction nobody
+    remembered to update. Structural typing rather than a shared base class: the two
+    configs are independent surfaces whose VALUES deliberately differ (a legitimate
+    `read_file` result dwarfs a legitimate request), and only the shape is common.
+    """
+
+    max_depth: int
+    max_object_keys: int
+    max_array_length: int
+    max_string_length: int
+    max_total_fields: int
+
+
+def check_limits(
+    body: Mapping[str, Any],
+    cfg: StructuralLimits,
+    code: ReasonCode = ReasonCode.PROTO_LIMIT_EXCEEDED,
+) -> None:
+    """One ITERATIVE walk for depth, array length, string length, and field count.
 
     Explicit stack, not recursion: a recursive walk here would reintroduce exactly
     the stack-exhaustion problem the prescan just solved, one layer later and with
     the payload already in memory.
+
+    Depth is carried on the stack rather than checked by a separate pass. For a
+    REQUEST it is redundant — `prescan` already refused anything deeper before the
+    bytes were parsed — and for a RESPONSE it is the only depth check there is,
+    because the SDK parses the upstream's bytes before the gateway sees them and
+    there is nothing left to prescan. One walk, and the redundant half costs an
+    integer per node.
+
+    **Only CONTAINERS count toward depth**, which is what `prescan` measures: it
+    increments on `{` and `[` and never on a scalar. Testing the depth of every node
+    made this walk one level stricter than the prescan for the same document, so a
+    request at exactly `max_depth` passed the byte scan and was then rejected after
+    parsing — two limits with one name disagreeing about the boundary, which is worse
+    than either being wrong. Found in review; `test_protocol.py` pins the pair.
+
+    `code` is the caller's, so the same walk can deny as PROTO_ or RESP_ without
+    either side learning the other's vocabulary.
     """
     fields = 0
-    stack: list[Any] = [body]
+    stack: list[tuple[Any, int]] = [(body, 1)]
     while stack:
-        node = stack.pop()
+        node, depth = stack.pop()
         if isinstance(node, Mapping):
+            if depth > cfg.max_depth:
+                raise _deny(code, f"depth > {cfg.max_depth}")
             mapping = cast("Mapping[str, Any]", node)
             if len(mapping) > cfg.max_object_keys:
-                raise _deny(
-                    ReasonCode.PROTO_LIMIT_EXCEEDED, f"object keys {len(mapping)}"
-                )
+                raise _deny(code, f"object keys {len(mapping)}")
             fields += len(mapping)
             if fields > cfg.max_total_fields:
-                raise _deny(ReasonCode.PROTO_LIMIT_EXCEEDED, "total fields")
+                raise _deny(code, "total fields")
             for key, value in mapping.items():
                 if len(key) > cfg.max_string_length:
-                    raise _deny(ReasonCode.PROTO_LIMIT_EXCEEDED, "key length")
-                stack.append(value)
+                    raise _deny(code, "key length")
+                stack.append((value, depth + 1))
         elif isinstance(node, list):
+            if depth > cfg.max_depth:
+                raise _deny(code, f"depth > {cfg.max_depth}")
             array = cast("list[Any]", node)
             if len(array) > cfg.max_array_length:
-                raise _deny(ReasonCode.PROTO_LIMIT_EXCEEDED, f"array {len(array)}")
-            stack.extend(array)
+                raise _deny(code, f"array {len(array)}")
+            stack.extend((item, depth + 1) for item in array)
         elif isinstance(node, str) and len(node) > cfg.max_string_length:
-            raise _deny(ReasonCode.PROTO_LIMIT_EXCEEDED, f"string {len(node)}")
+            raise _deny(code, f"string {len(node)}")
 
 
 # ===========================================================================

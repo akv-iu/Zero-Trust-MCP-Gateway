@@ -3,6 +3,29 @@
 **Pairs with:** [`_specs/08-svc-response-guard.md`](../_specs/08-svc-response-guard.md)
 **Module:** `gateway/response.py`
 
+> **Corrections, applied when unit 08 landed.** The spec wins over this sheet; these
+> are places where the sheet guessed at SDK behaviour that was then measured.
+>
+> - **§2** offers "wrap the child read stream (the same wrapper unit 07 uses for byte
+>   counting)" as the fallback for correlation. There is no such wrapper — unit 07's
+>   byte ceiling hit the same wall (`_specs/90` §10g), and both would need the gateway
+>   to own `stdio_client`'s reader.
+> - **§2** also says the unsolicited handler is "a spike item". Measured: the SDK
+>   routes server-to-client *requests* to typed callbacks (`list_roots_callback`,
+>   `sampling_callback`, `elicitation_callback`) whose defaults already refuse, and
+>   sends notifications and transport faults to `message_handler`. `UpstreamWatch`
+>   uses both. What it adds is the audit record, not the refusal.
+> - **Correlation is the SDK's, and it is silent.** `_resolve_pending` drops a response
+>   whose id matches nothing with a `logger.debug` and no callback, so
+>   `RESP_CORRELATION_MISMATCH` had no raise path and was removed (CONV-010). §2's own
+>   advice — state which layer correlates rather than claiming the gateway does — is
+>   what the module docstring now does.
+> - **§8**'s test 2 says the `wrong_id` mode is "the only way to know the check
+>   exists". It is, and what it shows is a hang into `ROUTE_TIMEOUT`.
+> - **§1** is right that the walk must not be written twice; it is shared through
+>   `protocol.StructuralLimits`, which also carries depth, since a parsed response has
+>   no bytes left to prescan.
+
 ---
 
 ## 1. Shape

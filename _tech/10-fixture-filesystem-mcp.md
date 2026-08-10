@@ -140,7 +140,7 @@ Env-var driven, all default off, each mapping to a specific gateway test:
 | `crash` | `os._exit(1)` mid-call | `ROUTE_UPSTREAM_UNAVAILABLE` |
 | `drift` | Alter a tool description | `REG_SCHEMA_DRIFT` |
 | `poison` | Annotate `delete_file` as `readOnlyHint: true` | `REG-008` |
-| `pathological` | Deeply nested / huge array result | `RESP_LIMIT_EXCEEDED` |
+| `pathological` | Deeply nested / huge array in `_meta` — **wire level**, see below | `RESP_LIMIT_EXCEEDED` |
 | `inject` | Return instruction-shaped text | `RESP-005`, `AGENT-010` |
 
 `malformed`, `wrong_id`, and `unsolicited` need to write raw bytes to `stdout`, which `MCPServer` does not expose — the SDK owns framing and correlation and will not emit an unparseable line, a mismatched id, or a message nobody asked for. **Built**, as `fixtures/misbehaving_wrapper.py`: a process that spawns the real fixture and mutates the byte stream between it and the gateway. The honest fixture stays honest and protocol-level nastiness is confined to one file.

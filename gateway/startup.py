@@ -23,7 +23,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from gateway import bridge, policy, registry
+from gateway import bridge, policy, registry, response
 from gateway.audit import AuditSink
 from gateway.audit_schema import LifecycleEvent
 from gateway.config import Config
@@ -118,7 +118,10 @@ async def serve(config_path: str | Path) -> AsyncGenerator[Deps]:
             raise
 
         try:
-            async with bridge.upstream(reg.server.child_config(cfg.child)) as up:
+            # RESP-002: the watcher records what the upstream says that no request
+            # asked for. It needs the sink, which only exists here.
+            watch = response.UpstreamWatch(sink, reg.server.id)
+            async with bridge.upstream(reg.server.child_config(cfg.child), watch) as up:
                 advertised = [
                     t.model_dump(by_alias=True, exclude_none=True)
                     for t in (await up.list_tools()).tools

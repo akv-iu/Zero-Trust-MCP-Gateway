@@ -174,6 +174,11 @@ owner, so a request reaching one is denied as `INTERNAL_ERROR` rather than passe
 | A tool listed that the principal could never call | Unit 07 filters the `tools/list` **response** against `data.gateway.discoverable` | REG-010's second half; the question asked is "any resource at all", never a placeholder path |
 | An allowed call running unbounded, or answering unbounded | Unit 07 enforces the obligations unit 06 returned, records them as enforced | `ROUTE_TIMEOUT` / `ROUTE_RESPONSE_TOO_LARGE`; no retry on any path |
 | A side effect whose evidence does not survive | Unit 07 write-ahead `upstream_attempt`, fsynced before the call | Closes §2.3's gap: an unwritable sink now denies before the effect, not after |
+| An oversized, pathological or wrongly-shaped upstream response | Unit 08, on the parsed structure | The **live** `pathological` mode through the real child, plus boundary triples; one walk shared with unit 02, pinned to agree with its byte prescan on the depth boundary |
+| Tool output read as instructions by whatever consumes it next | `Untrusted[T]`, whose `__str__` raises | The `inject` payload is delivered **intact and labelled**; the claim is that injected text is structurally incapable of changing an authorization outcome, not that it is detected |
+| A server-initiated request — sampling, elicitation, roots | Unit 08 `UpstreamWatch` refuses all three **and records the attempt** | The SDK's defaults already refused; what was missing was the evidence, so `FIXTURE_MODE=unsolicited` produced an ordinary success and told nobody |
+| A response that rewrites what the fixture produced | Nothing in unit 08 mutates | Byte-for-byte canonical-JSON comparison; a break that sorts keys and adds one field is caught |
+| A reply a client cannot correlate | Unit 08 frames the result as a JSON-RPC response | Asserted over a real ASGI call, not over the pipeline's return value — which is how the bare-result defect survived the first cut |
 
 **Unit 07's rows are built and not yet proved.** Its acceptance tests were skipped at
 the author's instruction; until they land these are design claims about code that
@@ -189,20 +194,17 @@ need the OPA binary and skip without it. A skip is never counted as a pass.
 
 | Threat | Planned control | State |
 |---|---|---|
-| An oversized or uncorrelated upstream response | Unit 08 response guard | stub |
-| An upstream response that is fabricated, unsolicited, or answers a different id | Unit 08, consuming the `malformed` / `wrong_id` / `unsolicited` wire modes | stub |
+| Everything above, *measured over the corpus* rather than over hand-written tests | Unit 11's protected client, scoring the same rows in `protected` that `direct` already scores | next |
 
-**Nothing completes end to end yet, and the gap moved rather than closed.** Unit 07
-forwards, so an allowed call now reaches the child and causes its side effect — and
-then dies at `response.validate`'s `NotImplementedError`, which denies. The client is
-told the request failed while the effect has already happened. That is the same shape
-§2.3 describes and it is temporary: it exists only while unit 08 is a stub, and the
-`upstream_attempt` record makes it visible rather than silent, because the log names
-the side effect that was attempted even when the request event says `error`.
+**The pipeline now completes.** A request goes in one end and a tool result comes out
+the other, verified end to end against a real OPA and a real child in
+`tests/integration/test_end_to_end.py` — including the assertion that a denied request
+produced nothing *at the fixture's own operation log*, which is the one claim in this
+project the gateway cannot make about itself.
 
 Until unit 11's protected client exists the corpus is still scored `direct`
-(undefended), which is the "before" measurement. No row yet demonstrates a gateway
-defence end to end.
+(undefended), which is the "before" measurement. No corpus row yet demonstrates a
+gateway defence, and the security rate in `PLAN.md` §6.2 stays unmeasured until it does.
 
 ### 2.3 Fail-closed, and where it stops
 

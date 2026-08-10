@@ -1,204 +1,324 @@
-"""HTTP client -> ASGI edge -> stdio child -> real fixture, over a real socket.
+"""All eight stages, one process at a time, against real everything.
 
-Review finding: unit 01 had no test proving the two halves connect. Both were
-verified in isolation, which is exactly the gap that let the fixture's `**kwargs`
-schema bug survive 35 passing fixture tests.
+This is the first test in the project where a request goes in one end and a tool result
+comes out the other. Every earlier integration test stopped at a stage boundary because
+the stages after it were stubs.
 
-No policy is involved yet — the handler forwards straight to the upstream. Injecting
-the handler keeps this honest: production wires `pipeline.handle` here, and there is
-NO passthrough mode in the gateway that could be left switched on (CONV-001).
+What makes it worth its runtime is that nothing here is simulated: a real OPA process
+decides, a real child MCP server performs the side effect, and the assertion that the
+denied request caused nothing is made against the FIXTURE'S OWN operation log rather
+than against the gateway's opinion of itself (CONV-018). A gateway that denied in its
+audit record and forwarded anyway would pass every unit test in this repository and
+fail here.
+
+SKIPPED, never passed, when OPA is absent.
 """
 
 from __future__ import annotations
 
 import json
-import socket
-import sys
+import os
+import shutil
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import anyio
-import httpx
 import pytest
 
 from fixtures.build_tree import build
 from gateway import startup
-from gateway.audit import AuditBuilder, AuditSink, read_events
-from gateway.bridge import upstream
-from gateway.config import EdgeConfig
-from gateway.edge import build_app
-from gateway.errors import Stage
-from gateway.types import RawEnvelope, Untrusted
-
-pytestmark = [pytest.mark.anyio, pytest.mark.slow]
+from gateway.audit import read_events
+from gateway.errors import GatewayDenial, ReasonCode
+from gateway.pipeline import handle
+from harness.scenario import Scenario
+from harness.wire import build_envelope
+from scripts.opa_sidecar import find_binary, sidecar
 
 REPO = Path(__file__).resolve().parents[2]
 
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.slow,
+    pytest.mark.skipif(
+        find_binary() is None,
+        reason="OPA not found (set ZTMG_OPA_BIN or put the binary in .tools/) — "
+        "REPORTED AS SKIPPED, never counted as a pass",
+    ),
+]
 
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+
+@pytest.fixture(scope="module")
+def opa_url() -> Iterator[str]:
+    with sidecar() as url:
+        yield url
 
 
 @pytest.fixture
-def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    build(tmp_path / "fixture")
-    monkeypatch.setenv("FIXTURE_ROOT", str(tmp_path / "fixture"))
-    monkeypatch.setenv("FIXTURE_OPLOG", str(tmp_path / "oplog.jsonl"))
-    monkeypatch.setenv("FIXTURE_ALLOW_WEAK_ISOLATION", "1")
-    monkeypatch.delenv("FIXTURE_MODE", raising=False)
-    return tmp_path
+def deployment(tmp_path: Path, opa_url: str) -> Path:
+    """A whole gateway deployment in a temp directory: tree, config, registry, audit.
 
-
-async def test_http_request_reaches_the_real_fixture_and_is_audited(env: Path) -> None:
-    """The whole chain, end to end, with the audit record joining it together."""
-    import uvicorn
-
-    port = free_port()
-    sink = AuditSink(env / "audit.jsonl")
-    sink.open()
-
-    shipped, reg = startup.load_all(REPO / "config" / "gateway.toml")
-    # Launch parameters come from the REGISTRY now (REG-002); `[child]` carries only
-    # bridge tuning. Only the interpreter is substituted, because a bare `python`
-    # need not be on PATH in every CI image.
-    child = reg.server.child_config(shipped.child).model_copy(
-        update={"executable": sys.executable, "cwd": str(REPO)}
-    )
-
-    with anyio.fail_after(90):
-        async with upstream(child) as up:
-
-            async def handler(envelope: RawEnvelope) -> Untrusted[dict]:
-                builder = AuditBuilder(envelope.request_id)
-                try:
-                    body = json.loads(envelope.body)
-                    with builder.stage(Stage.PROTOCOL):
-                        method = body["method"]
-                        params = body.get("params", {})
-                    builder.set(mcp_method=method, tool_name=params.get("name"))
-                    with builder.stage(Stage.ROUTE):
-                        result = await up.call_tool(params["name"], params["arguments"])
-                    builder.set(decision="allow", upstream_status="ok")
-                    builder.set_outcome("allowed")
-                    return Untrusted({"content": [c.text for c in result.content]})
-                finally:
-                    await builder.finalize_and_write(sink)
-
-            cfg = EdgeConfig(host="127.0.0.1", port=port)
-            server = uvicorn.Server(
-                uvicorn.Config(
-                    build_app(cfg, handler),
-                    host=cfg.host,
-                    port=port,
-                    log_level="error",
-                    access_log=False,
-                )
-            )
-            async with anyio.create_task_group() as tg:
-                tg.start_soon(server.serve)
-                await _wait_ready(server)
-
-                async with httpx.AsyncClient(timeout=30) as client:
-                    resp = await client.post(
-                        f"http://127.0.0.1:{port}/mcp",
-                        headers={
-                            "content-type": "application/json",
-                            "mcp-protocol-version": "2026-07-28",
-                            "mcp-method": "tools/call",
-                            "mcp-name": "read_file",
-                        },
-                        json={
-                            "jsonrpc": "2.0",
-                            "id": 1,
-                            "method": "tools/call",
-                            "params": {
-                                "name": "read_file",
-                                "arguments": {"path": "public/documentation.txt"},
-                            },
-                        },
-                    )
-                server.should_exit = True
-
-    # 1. the client got the file
-    assert resp.status_code == 200, resp.text
-    assert "Public documentation" in resp.json()["content"][0]
-
-    # 2. the FIXTURE observed the read - the oracle's evidence, not the gateway's word
-    oplog = (env / "oplog.jsonl").read_text("utf-8")
-    assert "public/documentation.txt" in oplog
-
-    # 3. exactly one audit event, correlated, with per-stage timings for the benchmark
-    events = [e for e in read_events(sink.path) if e.event_type == "request"]
-    assert len(events) == 1
-    ev = events[0]
-    assert ev.outcome == "allowed" and ev.tool_name == "read_file"
-    assert {"protocol", "route"} <= set(ev.stage_latency_ms)
-    assert ev.transport == "streamable_http"
-
-
-async def test_edge_rejects_before_the_child_is_touched(env: Path) -> None:
-    """A request denied at the edge must leave NO trace at the fixture.
-
-    This is the mediation property in miniature, verified where it counts: at the
-    protected system, not in the gateway's own response.
+    The shipped `config/gateway.toml` is rewritten rather than replaced, so this
+    exercises the real roots, the real decoys and the real ceilings. A hand-written
+    config here would test a configuration nobody ships.
     """
-    import uvicorn
+    fixture = tmp_path / "fixture"
+    build(fixture)
+    os.environ["FIXTURE_ROOT"] = str(fixture)
+    os.environ["FIXTURE_OPLOG"] = str(tmp_path / "oplog.jsonl")
+    os.environ["FIXTURE_ALLOW_WEAK_ISOLATION"] = "1"
+    os.environ["FIXTURE_MODE"] = ""
 
-    port = free_port()
-    shipped, reg = startup.load_all(REPO / "config" / "gateway.toml")
-    # Launch parameters come from the REGISTRY now (REG-002); `[child]` carries only
-    # bridge tuning. Only the interpreter is substituted, because a bare `python`
-    # need not be on PATH in every CI image.
-    child = reg.server.child_config(shipped.child).model_copy(
-        update={"executable": sys.executable, "cwd": str(REPO)}
+    posix = str(fixture).replace("\\", "/")
+    text = (REPO / "config" / "gateway.toml").read_text("utf-8")
+    text = text.replace('base = "var/fixture"', f"base = {json.dumps(str(fixture))}")
+    text = text.replace('path = "var/fixture/', f'path = "{posix}/')
+    text = text.replace("http://127.0.0.1:8181", opa_url)
+    text = text.replace(
+        'path = "var/audit.jsonl"', f"path = {json.dumps(str(tmp_path / 'audit.jsonl'))}"
+    )
+    cfg_path = tmp_path / "gateway.toml"
+    cfg_path.write_text(text, encoding="utf-8")
+    shutil.copy(REPO / "config" / "registry.toml", tmp_path / "registry.toml")
+    return cfg_path
+
+
+def envelope(rid: str, tool: str, arguments: dict[str, Any], principal: str) -> Any:
+    return build_envelope(
+        Scenario.model_validate(
+            {
+                "id": rid,
+                "class": "legitimate",
+                "layer": "security",
+                "principal": principal,
+                "tool": tool,
+                "arguments": arguments,
+                "expected_decision": "allow",
+                "expected_reason": "POLICY_SCOPED_READ",
+                "expected_side_effect": "none",
+                "risk_tier": "R1",
+                "notes": "end-to-end",
+            }
+        ),
+        request_id=rid,
     )
 
-    with anyio.fail_after(90):
+
+async def test_the_whole_pipeline_allows_and_denies_and_the_fixture_agrees(
+    deployment: Path, tmp_path: Path
+) -> None:
+    """One allowed read, one denied read, and the evidence for both.
+
+    The allowed one must come back with the file's actual contents — proof that stages
+    07 and 08 carried a real result rather than a shape that merely validated. The
+    denied one must produce no operation at the fixture at all.
+    """
+    async with startup.serve(deployment) as deps:
+        allowed = await handle(
+            envelope("e2e-1", "read_file", {"path": "public/documentation.txt"}, "dev"),
+            deps,
+        )
+        body = json.dumps(allowed.unwrap())
+        assert "Public documentation" in body, "the real file contents did not survive"
+
+        with pytest.raises(GatewayDenial) as exc:
+            await handle(
+                envelope(
+                    "e2e-2",
+                    "read_file",
+                    {"path": "confidential/fake_salaries.csv"},
+                    "dev",
+                ),
+                deps,
+            )
+        assert exc.value.reason_code is ReasonCode.POLICY_PATH_NOT_PERMITTED
+
+    events = list(read_events(tmp_path / "audit.jsonl"))
+    requests = {e.request_id: e for e in events if e.event_type == "request"}
+    assert requests["e2e-1"].outcome == "allowed"
+    assert requests["e2e-1"].upstream_status == "ok"
+    assert requests["e2e-1"].response_bytes and requests["e2e-1"].response_bytes > 0
+    assert requests["e2e-2"].outcome == "denied"
+    assert requests["e2e-2"].upstream_status is None, "a denied request contacted nothing"
+
+    # AUDIT-009: the write-ahead record exists for the call that could cause a side
+    # effect, and ONLY for it. This is the pairing that keeps a lost terminal record
+    # from erasing the fact that something happened.
+    attempts = [e for e in events if e.event_type == "upstream_attempt"]
+    assert [e.request_id for e in attempts] == ["e2e-1"]
+
+    # CONV-018, and the only assertion here that the gateway cannot fake: the oracle's
+    # source is the fixture's own log, written by the child process.
+    oplog = (tmp_path / "oplog.jsonl").read_text("utf-8")
+    assert "documentation.txt" in oplog, "the allowed read never reached the fixture"
+    assert "fake_salaries" not in oplog, "the DENIED read reached the fixture"
+
+
+async def test_a_success_comes_back_over_HTTP_as_valid_json_rpc(
+    deployment: Path,
+) -> None:
+    """Through the ASGI edge, because calling `pipeline.handle` directly hid a defect.
+
+    The first version of this file drove the pipeline and asserted on the returned
+    object, so it never saw what actually goes on the wire — and what went on the wire
+    for a SUCCESS was the bare MCP result, with no `jsonrpc`, no `id` and no `result`.
+    A conforming client could not have correlated a single successful reply. Denials
+    were framed correctly by `edge._error`, which is what kept it invisible.
+
+    Found in review. Every claim about the client-facing contract belongs at this
+    level from now on; the pipeline-level tests above are about the stages.
+    """
+    from gateway.edge import build_app
+
+    async with startup.serve(deployment) as deps:
+        env = envelope("e2e-http", "read_file", {"path": "public/documentation.txt"}, "d")
+        app = build_app(deps.config.edge, lambda e: handle(e, deps))
+
+        captured: dict[str, Any] = {"body": b"", "status": None}
+
+        async def send(message: dict[str, Any]) -> None:
+            if message["type"] == "http.response.start":
+                captured["status"] = message["status"]
+            else:
+                captured["body"] += message.get("body", b"")
+
+        queued = [{"type": "http.request", "body": env.body, "more_body": False}]
+
+        async def receive() -> dict[str, Any]:
+            # Once the body is drained a real server BLOCKS until the client goes
+            # away. Returning anything here would make the edge's disconnect watcher
+            # spin, and returning `http.disconnect` would cancel every request.
+            if queued:
+                return queued.pop(0)
+            await anyio.sleep_forever()
+            raise AssertionError("unreachable")
+
+        await app(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": deps.config.edge.mcp_path,
+                "headers": [(k.encode(), v.encode()) for k, v in env.metadata],
+            },
+            receive,
+            send,
+        )
+
+    assert captured["status"] == 200
+    body = json.loads(captured["body"])
+    assert body["jsonrpc"] == "2.0", f"not a JSON-RPC response: {body}"
+    assert "result" in body and "error" not in body
+    assert body["id"] is not None, "a client cannot correlate a reply with no id"
+    assert "Public documentation" in json.dumps(body["result"])
+
+
+async def test_the_live_pathological_response_reaches_the_guard_and_is_refused(
+    tmp_path: Path, opa_url: str
+) -> None:
+    """The advertised attack, through the real child, not a hand-built `RawResult`.
+
+    This is the test whose absence made unit 08 look covered. The synthetic structural
+    tests in `test_response.py` passed while `FIXTURE_MODE=pathological` produced a
+    302-byte `isError: true` — the SDK refused to serialize the deep structure, so the
+    guard never saw it and the mode proved nothing (review finding).
+
+    Three placements were tried before one worked, and each wrong one failed a layer
+    BEFORE unit 08, which looks identical to the guard working: `content` blocks are
+    typed models, `structuredContent` is validated against the tool's output schema,
+    and only `_meta` is genuinely open. See `fixtures/filesystem_server/modes.py`.
+    """
+    from gateway import response as guard
+    from gateway import router
+    from gateway.bridge import upstream
+    from gateway.config import ChildConfig, ResponseConfig
+    from gateway.errors import ResponseDenial
+    from gateway.hashing import canonical_json
+    from gateway.types import CanonicalRequest, Obligations, RawResult
+
+    fixture = tmp_path / "fixture"
+    build(fixture)
+    os.environ["FIXTURE_ROOT"] = str(fixture)
+    os.environ["FIXTURE_OPLOG"] = str(tmp_path / "oplog.jsonl")
+    os.environ["FIXTURE_ALLOW_WEAK_ISOLATION"] = "1"
+    os.environ["FIXTURE_MODE"] = "pathological"
+
+    child = ChildConfig(
+        executable=__import__("sys").executable,
+        # The wrapper, not the server: the SDK will not emit this, so the bytes have
+        # to be edited between the honest fixture and the gateway.
+        args=("-m", "fixtures.misbehaving_wrapper"),
+        cwd=str(REPO),
+        env_allowlist=(
+            "PATH",
+            "PYTHONPATH",
+            "SYSTEMROOT",
+            "FIXTURE_ROOT",
+            "FIXTURE_OPLOG",
+            "FIXTURE_MODE",
+            "FIXTURE_ALLOW_WEAK_ISOLATION",
+        ),
+        startup_timeout_s=20.0,
+    )
+    req = CanonicalRequest(
+        request_id="patho",
+        protocol_version="2026-07-28",
+        method="tools/call",
+        jsonrpc_id=1,
+        tool_name="read_file",
+        arguments={"path": "public/documentation.txt"},
+        body_hash="b",
+    )
+
+    with anyio.fail_after(60):
         async with upstream(child) as up:
-            reached = False
-
-            async def handler(envelope: RawEnvelope) -> Untrusted[dict]:
-                nonlocal reached
-                reached = True
-                await up.call_tool("read_file", {"path": "public/documentation.txt"})
-                return Untrusted({})
-
-            cfg = EdgeConfig(
-                host="127.0.0.1", port=port, allowed_origins=("http://localhost:3000",)
+            sdk_result = await up.call_tool(
+                "read_file", {"path": "public/documentation.txt"}
             )
-            server = uvicorn.Server(
-                uvicorn.Config(
-                    build_app(cfg, handler),
-                    host=cfg.host,
-                    port=port,
-                    log_level="error",
-                    access_log=False,
-                )
-            )
-            async with anyio.create_task_group() as tg:
-                tg.start_soon(server.serve)
-                await _wait_ready(server)
-                async with httpx.AsyncClient(timeout=30) as client:
-                    bad_origin = await client.post(
-                        f"http://127.0.0.1:{port}/mcp",
-                        headers={"origin": "http://evil.test"},
-                        json={},
-                    )
-                    wrong_path = await client.post(
-                        f"http://127.0.0.1:{port}/nope", json={}
-                    )
-                    removed_method = await client.get(f"http://127.0.0.1:{port}/mcp")
-                server.should_exit = True
 
-    assert bad_origin.status_code == 403
-    assert wrong_path.status_code == 404
-    assert removed_method.status_code == 405
-    assert not reached, "a rejected request reached the handler"
-    assert not (env / "oplog.jsonl").exists(), "the fixture saw a rejected request"
+    content = router._content(sdk_result)  # noqa: SLF001 - the router's own mapping
+    assert "deep" in content.get("_meta", {}), (
+        "the payload did not survive the SDK — the mode is testing nothing again"
+    )
+
+    raw = RawResult(
+        content=content,
+        is_error=False,
+        byte_count=len(canonical_json(content)),
+        upstream_latency_ns=1,
+    )
+    with pytest.raises(ResponseDenial) as exc:
+        guard.validate(
+            raw,
+            req,
+            Obligations(timeout_ms=3_000, max_response_bytes=4_194_304),
+            ResponseConfig(),
+        )
+    assert exc.value.reason_code is ReasonCode.RESP_LIMIT_EXCEEDED
 
 
-async def _wait_ready(server: object, timeout: float = 20.0) -> None:
-    with anyio.fail_after(timeout):
-        while not getattr(server, "started", False):
-            await anyio.sleep(0.05)
+async def test_a_denied_request_leaves_no_response_bytes_anywhere(
+    deployment: Path, tmp_path: Path
+) -> None:
+    """RESP-009 / CONV-012 over a real run rather than over a constructed record.
+
+    The fixture's files carry canary strings precisely so this can be asked as "does
+    any audit record contain any of the protected content", which is the question the
+    report needs answered and the one a per-field review cannot settle.
+    """
+    async with startup.serve(deployment) as deps:
+        await handle(
+            envelope("e2e-3", "read_file", {"path": "public/documentation.txt"}, "dev"),
+            deps,
+        )
+
+    raw = (tmp_path / "audit.jsonl").read_text("utf-8")
+    contents = (
+        Path(os.environ["FIXTURE_ROOT"]) / "public" / "documentation.txt"
+    ).read_text("utf-8")
+    for line in contents.splitlines():
+        if len(line.strip()) > 12:
+            assert line.strip() not in raw, f"response content in the audit log: {line!r}"
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q"]))

@@ -461,8 +461,13 @@ def test_records_are_newline_delimited_on_every_platform(sink: AuditSink) -> Non
 
 
 def test_schema_version_is_stamped(sink: AuditSink) -> None:
+    """A LITERAL, not `SCHEMA_VERSION` — comparing the constant to itself would
+    pass for any value and the point is that a bump is a deliberate edit somebody
+    reviews. Same argument as `FINGERPRINT_VERSION`'s golden, and the same near
+    miss behind it: v1 -> v2 -> v3 both added an event type, which is additive for
+    a writer and breaking for a reader."""
     sink.write_sync(LifecycleEvent(ts=datetime.now(UTC), kind="startup"))
-    assert _lines(sink)[0]["schema_version"] == 2
+    assert _lines(sink)[0]["schema_version"] == 3
 
 
 async def test_null_fields_are_present_not_omitted(sink: AuditSink) -> None:

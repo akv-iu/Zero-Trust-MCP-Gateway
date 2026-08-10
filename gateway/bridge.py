@@ -147,10 +147,20 @@ class UpstreamHandle:
         return list(self.stderr)
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        """`allow_input_required=True` so unit 08 gets to refuse MRTR by name.
+
+        With the SDK's default the same response raises a bare `RuntimeError` from
+        inside the session, which reaches the pipeline's generic handler as
+        INTERNAL_ERROR — a denial for the right reason under a name that says nothing.
+        ADR-001 §5 asks for an explicit, tested refusal; that refusal lives in unit 08
+        (`RESP_MRTR_UNSUPPORTED`), and it can only live there if the result arrives.
+        """
         if not self.alive:
             raise RouteDenial(ReasonCode.ROUTE_UPSTREAM_UNAVAILABLE)
         async with self._lock:
-            return await self._guarded(self._session.call_tool(name, arguments))
+            return await self._guarded(
+                self._session.call_tool(name, arguments, allow_input_required=True)
+            )
 
     async def list_tools(self) -> Any:
         async with self._lock:
@@ -207,11 +217,18 @@ def _child_env(cfg: ChildConfig) -> dict[str, str]:
 
 
 @asynccontextmanager
-async def upstream(cfg: ChildConfig) -> AsyncGenerator[UpstreamHandle]:
+async def upstream(cfg: ChildConfig, watch: Any = None) -> AsyncGenerator[UpstreamHandle]:
     """Spawn the child, complete the handshake, yield a handle, tear it down.
 
     Every failure path out of here is a RouteDenial with a reason code. Callers
     never see an ExceptionGroup, an OSError, or a TimeoutError.
+
+    `watch` is unit 08's `UpstreamWatch` when the caller has an audit sink to give it,
+    and `None` in the tests that only need a child. The session is constructed here, so
+    this is the only place its callbacks can be registered — the SDK's defaults already
+    refuse every server-to-client request, and what the watcher adds is the record
+    RESP-002 requires. A `None` watch leaves the SDK's own defaults in place, so the
+    refusal never depends on the wiring being remembered.
     """
     ring: deque[str] = deque(maxlen=cfg.stderr_capture_lines)
     read_fd, write_fd = os.pipe()
@@ -230,9 +247,19 @@ async def upstream(cfg: ChildConfig) -> AsyncGenerator[UpstreamHandle]:
 
     handed_off = False
     try:
+        hooks: dict[str, Any] = (
+            {
+                "message_handler": watch.on_message,
+                "list_roots_callback": watch.refuse_roots,
+                "sampling_callback": watch.refuse_sampling,
+                "elicitation_callback": watch.refuse_elicitation,
+            }
+            if watch is not None
+            else {}
+        )
         async with (
             stdio_client(params, errlog=errlog) as (read, write),
-            ClientSession(read, write) as session,
+            ClientSession(read, write, **hooks) as session,
         ):
             try:
                 with anyio.fail_after(cfg.startup_timeout_s):

@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from gateway.types import RiskTier
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 """Bumped on any change here. The harness refuses to mix versions in one report.
 
 **v2** — `UpstreamAttemptEvent` was added for unit 07's write-ahead record. Additive
@@ -29,7 +29,10 @@ for a writer and *breaking for a reader*, which is why it is a bump rather than 
 quiet extension: `read_events` resolves the discriminated union strictly, so a v1
 reader handed a v2 file raises `CorruptAuditLog` on the first attempt record. That is
 the correct outcome — it is the same rule the reader already applies to a corrupt
-line — and it only reads as correct if the version says the format moved."""
+line — and it only reads as correct if the version says the format moved.
+
+**v3** — `UpstreamFaultEvent` was added for unit 08's out-of-band observations
+(RESP-002). Same reasoning as v2: additive for a writer, breaking for a reader."""
 
 Outcome = Literal["allowed", "denied", "error", "cancelled", "timeout"]
 """AUDIT-002: any other terminal state is unrepresentable, not merely discouraged."""
@@ -46,7 +49,7 @@ class RequestEvent(BaseModel):
 
     model_config = _FROZEN
 
-    schema_version: Literal[2] = SCHEMA_VERSION
+    schema_version: Literal[3] = SCHEMA_VERSION
     event_type: Literal["request"] = "request"
 
     request_id: str
@@ -104,7 +107,7 @@ class DriftEvent(BaseModel):
 
     model_config = _FROZEN
 
-    schema_version: Literal[2] = SCHEMA_VERSION
+    schema_version: Literal[3] = SCHEMA_VERSION
     event_type: Literal["drift"] = "drift"
 
     ts: datetime
@@ -141,7 +144,7 @@ class UpstreamAttemptEvent(BaseModel):
 
     model_config = _FROZEN
 
-    schema_version: Literal[2] = SCHEMA_VERSION
+    schema_version: Literal[3] = SCHEMA_VERSION
     event_type: Literal["upstream_attempt"] = "upstream_attempt"
 
     ts: datetime
@@ -155,12 +158,41 @@ class UpstreamAttemptEvent(BaseModel):
     policy_revision: str | None = None
 
 
+class UpstreamFaultEvent(BaseModel):
+    """08's out-of-band record: the upstream did something no request asked for.
+
+    RESP-002 requires an unsolicited upstream message to be dropped AND audited. It
+    belongs to no request — a server-initiated `roots/list`, `sampling/createMessage`
+    or `elicitation/create` arrives whenever the child feels like it — so it cannot be
+    a field on a `RequestEvent` without attributing it to whichever request happened to
+    be in flight, which is exactly the correlation this unit refuses to invent.
+
+    `fault` is the exception's CLASS NAME and nothing else. A pydantic
+    `ValidationError` message quotes the input it rejected, so recording the message
+    would put upstream response bytes in the audit log — the one thing RESP-009 and
+    CONV-012 forbid, arriving through the field meant to describe a failure.
+    """
+
+    model_config = _FROZEN
+
+    schema_version: Literal[3] = SCHEMA_VERSION
+    event_type: Literal["upstream_fault"] = "upstream_fault"
+
+    ts: datetime
+    server_id: str
+    reason_code: str
+    mcp_method: str | None = None
+    """The method of the unsolicited message, which the upstream chose from a closed
+    protocol vocabulary. Absent for a transport fault, which has no method."""
+    fault: str | None = None
+
+
 class LifecycleEvent(BaseModel):
     """Startup, shutdown, policy load, audit rotation."""
 
     model_config = _FROZEN
 
-    schema_version: Literal[2] = SCHEMA_VERSION
+    schema_version: Literal[3] = SCHEMA_VERSION
     event_type: Literal["lifecycle"] = "lifecycle"
 
     ts: datetime
@@ -169,6 +201,10 @@ class LifecycleEvent(BaseModel):
 
 
 AuditRecord = Annotated[
-    RequestEvent | DriftEvent | LifecycleEvent | UpstreamAttemptEvent,
+    RequestEvent
+    | DriftEvent
+    | LifecycleEvent
+    | UpstreamAttemptEvent
+    | UpstreamFaultEvent,
     Field(discriminator="event_type"),
 ]
