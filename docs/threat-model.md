@@ -149,20 +149,27 @@ owner, so a request reaching one is denied as `INTERNAL_ERROR` rather than passe
 | An unregistered, disabled or drifted tool | Unit 04 registry, fingerprints compared at handshake | Drift and the poisoned annotation against the **live** fixture in `FIXTURE_MODE=drift` / `=poison`, through real startup |
 | Path traversal, encoding tricks, device-name and separator aliases | Unit 05 canonicalization before policy | `test_canonicalize.py` against a real tree; Hypothesis over an adversarial segment alphabet; `harness/scenarios/fs_traversal.toml` |
 | Reading a synthetic sensitive location | Unit 05 decoy list, ahead of policy | Every decoy × every tool; the check is on the **resolved** path, so spelling does not evade it |
+| Reading or writing data the principal may not | Unit 06 default-deny Rego, evaluated by an external OPA | 22-row principal matrix against a live sidecar; 46 Rego tests standalone; both sides of the false-positive line |
+| A policy engine that is down, slow, or answering nonsense | Unit 06 broker; absence of an allow is a deny | **The sidecar process is killed** and every protected call denies; a stub transport supplies every malformed answer a correct OPA never gives |
+| A policy that has been edited since the engine started | Bundle content hash the running OPA must echo | `--watch` is off by design, so this is otherwise silent; startup refuses |
 | Evidence loss under cancellation | Unit 09 shielded write | Passes only with the production shield present |
 
-Unit 05's symlink rows (spec tests 6–8) need a platform that will create symlinks.
-Where it will not — Windows without Developer Mode, which is this developer's machine —
-they are reported **SKIPPED** and never counted as passes. Read the skip list before
-reading the pass count.
+Two things to read before the pass count. Unit 05's symlink rows (spec tests 6–8) need
+a platform that will create symlinks; where it will not — Windows without Developer
+Mode, which is this developer's machine — they are reported **SKIPPED**. Unit 06's rows
+need the OPA binary and skip without it. A skip is never counted as a pass.
 
 ### 2.2 Specified, not yet built
 
 | Threat | Planned control | State |
 |---|---|---|
-| Reading data the principal may not read | Unit 06 default-deny Rego | stub; OPA not yet required to run the suite |
-| An allowed call exceeding its obligations | Unit 07 router | stub |
+| A tool appearing in `tools/list` that the principal could never call | REG-010 filtering; `data.gateway.discoverable` exists and is tested, but nothing filters the RESPONSE yet | unit 07 |
+| An allowed call exceeding its obligations | Unit 07 router enforces what unit 06 returned | stub |
 | An oversized or uncorrelated upstream response | Unit 08 response guard | stub |
+
+Unit 06 decides; **nothing enforces its decision yet.** `router.forward` is still a
+stub, so an allow reaches no upstream and a deny prevents nothing that was going to
+happen anyway. The corpus still scores `direct` (undefended) end-to-end.
 
 The corpus rows for these already exist and are scored `direct` (undefended), which
 is the "before" measurement. None of them yet demonstrates a gateway defence.

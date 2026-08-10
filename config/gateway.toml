@@ -75,21 +75,35 @@ overwrite = true
 append = true
 delete = true
 
+# read = true and every write flag false: the CEILING says these areas are readable
+# in principle and immutable in fact, so no role - however its grants are edited
+# later - can write here. Who may read them is the grant table's answer, and in
+# policies/rego/gateway/grants.rego only `auditor` may.
+
 [[canonicalize.roots]]
 name = "confidential"
 path = "var/fixture/confidential"
 classification = "confidential"
+read = true
 
 [[canonicalize.roots]]
 name = "production"
 path = "var/fixture/production"
 classification = "production"
+read = true
 
+# Nothing at all. Unit 05 denies these before policy is asked (CANON_SENSITIVE_PATH);
+# the empty ceiling is the second line, so removing an entry from sensitive_decoys
+# downgrades the denial rather than removing it.
 [[canonicalize.roots]]
 name = "decoys"
 path = "var/fixture/decoys"
 classification = "secret"
 
+# Readable by the ceiling, prohibited by policy. The root exists so a path that stays
+# inside traps/ can be NAMED - `traps/escape_link/...` resolves out of the tree and is
+# reported as CANON_SYMLINK_ESCAPE, `traps/public_link/...` resolves into `public` and
+# is judged as the public read it really is.
 [[canonicalize.roots]]
 name = "traps"
 path = "var/fixture/traps"

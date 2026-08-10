@@ -29,7 +29,10 @@ class Deps:
 
     config: Config
     registry: registry.Registry
-    opa: Any  # httpx.AsyncClient — unit 06
+    opa: policy.PolicyEngine | None
+    """`None` only where a test drives stages that end before policy. `evaluate`
+    denies with POLICY_UNAVAILABLE rather than trusting the caller — an assembled
+    gateway with no policy engine must not be a gateway that allows."""
     upstream: Any  # UpstreamHandle — unit 01
     audit: AuditSink  # unit 09
 
@@ -55,6 +58,12 @@ async def handle(env: RawEnvelope, deps: Deps) -> Untrusted[JsonObject]:
         builder.set(**canonicalize.audit_fields(drv))
         with builder.stage(Stage.POLICY):
             dec = await policy.evaluate(req, ctx, tgt, drv, deps.opa, deps.config.policy)
+            # Set INSIDE the stage so the record carries the decision even when a
+            # check below rejects it: a policy result the gateway refused is exactly
+            # the thing an investigator needs to see, and raising first would leave
+            # the audit event saying only POLICY_RESULT_INVALID with nothing about
+            # what was invalid.
+            builder.set(**policy.audit_fields(dec))
         if dec.decision != "allow":
             raise PolicyDenial(ReasonCode(dec.reason_code))
         if dec.risk_tier != tgt.registry_risk_tier:

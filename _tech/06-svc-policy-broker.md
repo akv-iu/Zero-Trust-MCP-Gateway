@@ -121,42 +121,90 @@ def clamp(raw: dict) -> tuple[Obligations, bool]:
 ## 5. Rego layout
 
 ```text
-policies/rego/
-  gateway/decision.rego        # entrypoint: data.gateway.decision
-  gateway/discoverable.rego    # entrypoint for REG-010 (see TECH-04 §6)
-  gateway/roles.rego           # data-only: role -> permitted roots/operations
-  gateway/prohibitions.rego    # explicit prohibitions, highest precedence
-  reason_codes.json
-tests/                         # *_test.rego, run by `opa test`
+policies/rego/gateway/
+  decision.rego        # entrypoint: data.gateway.decision, and the precedence
+  discoverable.rego    # entrypoint for REG-010 (see TECH-04 §6)
+  grants.rego          # role -> root -> operations, plus the reconciliation rules
+  prohibitions.rego    # explicit prohibitions, highest precedence
+  revision.rego        # GENERATED stamp; see below
+policies/tests/        # *_test.rego, loaded by `opa test policies/` and NOT served
+policies/reason_codes.json
 ```
+
+`opa run --server` is pointed at `policies/rego` and `opa test` at `policies`, so the
+test files are never part of the served bundle. `revision.rego` is excluded from its
+own hash.
 
 Precedence (`POLICY-008`) expressed so it cannot be accidentally inverted:
 
 ```rego
-package gateway
-
 default decision := {"decision": "deny", "reason_code": "POLICY_DEFAULT_DENY",
                      "risk_tier": "R4", "obligations": {}}
 
 decision := d if { d := prohibition }                      # 1
 decision := d if { not prohibition; d := explicit_deny }   # 2
-decision := d if { not prohibition; not explicit_deny; d := allow_with_obligations }  # 3
+decision := d if { not prohibition; not explicit_deny; d := allow }  # 3
 ```
 
-Guarding each lower rule with `not` on the higher ones makes precedence a compile-visible property. Do not rely on rule ordering — Rego has none.
+Guarding each lower rule with `not` on the higher ones makes precedence a
+compile-visible property. Do not rely on rule ordering — Rego has none. Verified
+against OPA 1.19 before the bundle was written; `test_prohibition_beats_a_matching_grant`
+supplies a grant for a prohibited root, so an implementation letting an allow win
+would allow.
 
-Keep `prohibitions.rego` tiny and readable: sensitive decoys, `traps/`, anything outside a root. It is the file a reviewer reads first.
+**A `default` rule value must be constant** — `illegal default rule (value cannot
+contain var)` — so the default cannot echo `input.target.registry_risk_tier` and
+carries `R4` instead. That is the honest reading: nothing matched, so policy could not
+classify the request. Every other rule echoes the registry's tier, which the pipeline
+compares on an allow.
 
-### Policy revision (POLICY-014)
+Keep `prohibitions.rego` tiny and readable: sensitive decoys, `traps/`, anything
+outside a root. It is the file a reviewer reads first.
 
-Stamp the bundle at build time:
+**`grants.rego` names the roots and operations; it does not DEFINE them.** The role
+vocabulary and the per-root operation ceilings are published to `data.config` by
+`policy.publish_config` at startup, from `config/gateway.toml`, and the bundle
+reconciles against them:
 
-```bash
-git rev-parse --short HEAD > policies/rego/revision.txt
-# loaded as data.revision, echoed in every decision
-```
+| Rule | What it catches |
+|---|---|
+| `roles_without_grants` | a role in the vocabulary that policy never mentions — otherwise every request for that principal is `POLICY_DEFAULT_DENY`, which reads as a decision |
+| `grants_without_roles` | a grant for a role that no longer exists |
+| `grants_naming_unknown_roots` | a grant on a root the gateway does not approve |
+| `grants_on_prohibited_roots` | a grant a prohibition already refuses — a line that reads as permission and grants nothing |
 
-If `data.revision` is undefined, `validate_result` denies with `POLICY_REVISION_UNKNOWN`. That makes an unstamped bundle fail loudly rather than producing unattributable decisions.
+`check_bundle` queries all four at startup and refuses on any non-empty answer. This
+is what makes publishing the vocabulary better than duplicating it: there is nothing
+to keep in sync, and the one remaining way to disagree is a startup failure.
+
+`with` has two restrictions worth knowing before writing the tests: it may not appear
+in a rule HEAD, and it may not appear inside a call argument. So
+`decide(x) := decision with input as x` and `count(rule with data.x as y)` are both
+parse errors, and every test repeats its `with` clauses in the body.
+
+### Policy revision (POLICY-014) — corrected
+
+The draft stamped `git rev-parse --short HEAD` into the bundle and had Rego echo it in
+every decision. Two things are wrong with that.
+
+**A git SHA identifies the repository, not the bundle.** It changes on every commit
+that touches anything, and it does *not* change when an uncommitted policy edit is
+what actually decided. `policy.bundle_revision()` is a content hash over the `.rego`
+files instead: it moves when and only when the policy moves.
+
+**A bundle echoing its own revision agrees with itself** no matter which copy OPA
+loaded. The broker computes the hash from the files on disk and compares it to
+`data.gateway.policy_revision`, a constant stamped INTO the bundle by
+`scripts/sync_policy_revision.py`. A mismatch means the running OPA is serving
+something other than what is in the repo — which `--watch` being off makes both easy
+and completely silent — and `check_bundle` refuses to serve.
+
+Line endings are normalised in the hash. Git checks these files out CRLF on Windows and
+LF on Linux, and a revision that differed by platform would report two policies where
+there is one.
+
+`Decision.policy_revision` is stamped by the BROKER from that verified hash, not by
+Rego. `validate_result` denies with `POLICY_REVISION_UNKNOWN` when it is empty.
 
 ---
 
@@ -210,7 +258,10 @@ cache_enabled = false            # POLICY-012 — measure before enabling
 
 ## 9. Gotchas
 
-- **OPA 1.x requires `import rego.v1`** (or `if`/`contains` keyword syntax) in every file. Pin the OPA version in CI and in `docs/benchmark-report.md`'s environment block; syntax differences between 0.x and 1.x will silently break a bundle authored against the other.
+- **OPA 1.x** makes `if`/`contains` the default syntax and accepts `import rego.v1` as a no-op. Developed against **1.19.0**; `scripts/opa_sidecar.py` refuses anything that is not `1.x` rather than letting a 0.x binary parse the bundle differently. Record the version in `docs/benchmark-report.md`'s environment block.
+- **`evaluate` RETURNS a deny; it does not raise one.** Only a broker-side failure — unreachable, timed out, malformed, unattributable — raises, because those produce no decision to record. A policy deny IS a decision; `pipeline.handle` raises it *after* `builder.set` has put its fields on the audit event, so the record says what policy answered and not merely that something went wrong.
+- `isinstance(result, dict)` narrows to `dict[Unknown, Unknown]` under pyright strict, which poisons every value read out of it. Cast once, immediately after the check that makes the cast true.
+- `isinstance(True, int)` is `True` in Python, so a boolean obligation becomes a one-millisecond timeout unless `_bounded` rejects `bool` explicitly.
 - `--watch` for hot reload is a development convenience only; never enable it in a benchmark run, or the policy revision in the report may not be the one that decided.
 - Do not enable the decision cache before the benchmark exists. If OPA latency turns out to matter, the cache is a measured optimization with a published before/after — which is a better portfolio artifact than a cache that was always there.
 - OPA's HTTP server binds `0.0.0.0` by default in some versions. `--addr 127.0.0.1:8181` explicitly (`REQ-SEC-012`).

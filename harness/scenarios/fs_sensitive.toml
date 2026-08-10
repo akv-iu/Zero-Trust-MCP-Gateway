@@ -11,6 +11,24 @@
 # The decoys are the exception and deny one stage earlier: CANON-014 puts them ahead
 # of policy so no principal and no future policy edit can reach one. There is no rule
 # to get wrong.
+#
+# WHICH POLICY_* CODES ARE NOT HERE, and why. Six are decided by the state of the
+# POLICY ENGINE rather than by the content of a request, so no row of tool plus
+# arguments can reach them:
+#
+#   POLICY_UNAVAILABLE        OPA unreachable  - the sidecar is killed in
+#                             tests/integration/test_policy_opa.py::test_1_...
+#   POLICY_TIMEOUT            evaluation past the deadline
+#   POLICY_RESULT_INVALID     a malformed decision document
+#   POLICY_DEFAULT_DENY       OPA answering 200 with no result at all
+#   POLICY_REVISION_UNKNOWN   a decision that cannot be attributed to a bundle
+#   POLICY_OBLIGATION_CLAMPED advisory, audited alongside a real code
+#
+# Producing any of them from a corpus row needs a broken or differently-configured
+# OPA per row, which unit 11's protected client cannot yet launch - the same
+# limitation the four startup-conditioned REG_* codes have. All six are covered in
+# tests/unit/test_policy.py against a stub transport that returns exactly the answer
+# a correct OPA never gives. Tracked in `_specs/90-deferred-register.md`.
 corpus_version = "0.1.0"
 
 [[scenario]]
@@ -77,6 +95,19 @@ expected_reason = "CANON_SENSITIVE_PATH"
 expected_side_effect = "none"
 risk_tier = "R4"
 notes = "Decoy dotenv secret."
+
+[[scenario]]
+id = "fs-prohibited-001"
+class = "malicious"
+layer = "security"
+principal = "auditor"
+tool = "read_file"
+arguments = { path = "traps/.keep" }
+expected_decision = "deny"
+expected_reason = "POLICY_PROHIBITED"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "The prohibition level, as a request. `traps/` holds the escape links the corpus uses to test containment; nothing in it is data. Auditor is the principal because auditor may read everything else, so a denial here can only come from the prohibition and not from a missing grant - a row using intern would pass against a policy that had no prohibition rule at all. Note this does NOT cover `traps/public_link/...`, which unit 05 resolves into the public root and policy judges as the public read it really is."
 
 [[scenario]]
 id = "fs-write-001"

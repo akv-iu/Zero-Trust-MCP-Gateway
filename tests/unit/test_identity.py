@@ -596,6 +596,12 @@ def test_the_role_vocabulary_has_one_home() -> None:
     actually spell it. It also globbed an EMPTY directory and passed on zero files.
     Both are fixed: the values are checked, and an absent bundle now SKIPS.
 
+    And once unit 06 landed it failed for a third reason, which is the interesting
+    one: it forbade the identifier ENTIRELY, so the correct implementation — Rego
+    reading `data.config.role_vocabulary` to report a role with no grants — could not
+    be written. Reading the published value is the design; defining a second copy is
+    the defect. The rule is now about which of those a file is doing.
+
     Naming one role in a rule is legitimate policy. Naming every member of the
     closed set in one file is the signature of a reconstructed vocabulary, and that
     is what fails here. The load-bearing check is still unit 06's, at runtime,
@@ -608,14 +614,36 @@ def test_the_role_vocabulary_has_one_home() -> None:
     vocabulary = cfgmod.load(REPO / "config" / "gateway.toml").identity.role_vocabulary
     for f in files:
         source = f.read_text("utf-8", errors="ignore")
-        assert "role_vocabulary" not in source, (
-            f"{f.name} names the vocabulary. Publish it to OPA as data instead."
+        # Comments stripped first: prose explaining where the vocabulary lives is the
+        # documentation this rule wants, not the duplication it forbids.
+        code = "\n".join(line.split("#", 1)[0] for line in source.splitlines())
+        # READING the published value is the design. `data.config.role_vocabulary` is
+        # unit 06's seam and `grants.rego` uses it to report a role with no grants —
+        # an earlier version of this test forbade the identifier outright, which made
+        # the correct implementation unwritable. What is forbidden is DEFINING one.
+        assert code.count("role_vocabulary") == code.count(
+            "data.config.role_vocabulary"
+        ), (
+            f"{f.name} names `role_vocabulary` somewhere other than as "
+            "`data.config.role_vocabulary`. It may be read from what the gateway "
+            "publishes; it may not be defined in policy."
         )
-        assert not all(f'"{role}"' in source for role in vocabulary), (
-            f"{f.name} contains every role in {vocabulary} as a literal — the closed "
-            "set was reconstructed in policy and can now drift from config. Publish "
-            "IdentityConfig.role_vocabulary to OPA as data."
-        )
+    # A grant table keyed by role name legitimately spells every role — that IS the
+    # policy, and the earlier "no file may contain every role as a literal" rule
+    # forbade writing one. What makes the table safe is not that it avoids the names
+    # but that the bundle RECONCILES them against the published vocabulary, so a role
+    # in config with no grants refuses startup instead of denying silently. This
+    # asserts the reconciliation exists; `test_policy_opa.py` asserts it fires.
+    bundle = "\n".join(f.read_text("utf-8", errors="ignore") for f in files)
+    assert "data.config.role_vocabulary" in bundle, (
+        "no rule in the bundle reads the published vocabulary, so nothing would "
+        "notice a role that exists in config and has no grants — the exact silent "
+        "failure publishing it was supposed to remove"
+    )
+    assert set(vocabulary) == {"intern", "developer", "auditor"}, (
+        "the shipped vocabulary changed; `policies/rego/gateway/grants.rego` needs a "
+        "grant for every member or startup will refuse"
+    )
 
 
 def test_the_shipped_config_roles_are_within_its_own_vocabulary() -> None:

@@ -16,9 +16,9 @@ unit must do is in [`_specs/`](_specs/); how to build it is in [`_tech/`](_tech/
 
 Units built: foundation, 10 (fixture), 11 (harness skeleton), 09 (audit), 01 (HTTP
 edge + stdio upstream bridge), 02 (protocol guard), 03 (identity), 04 (registry),
-05 (filesystem canonicalizer). Remaining units are stubs that raise
-`NotImplementedError` naming their owner — a request reaching one is denied, never
-passed. Build order and state: [PLAN.md §4.2](PLAN.md).
+05 (filesystem canonicalizer), 06 (OPA policy broker + Rego bundle). Remaining units
+are stubs that raise `NotImplementedError` naming their owner — a request reaching one
+is denied, never passed. Build order and state: [PLAN.md §4.2](PLAN.md).
 
 The client edge is **Streamable HTTP on loopback**; only the upstream leg to the
 child server is stdio ([ADR-001](_specs/ADR-001-transport-and-mirrored-metadata.md)).
@@ -73,5 +73,24 @@ symlinks. On Windows three symlink tests skip (reported SKIPPED, never passed) a
 the fixture runs on the *weak* tier, which stamps `isolation: weak` on every
 benchmark report.
 
-OPA is a required external binary for units 06 and later (sidecar on
-`127.0.0.1:8181`).
+## OPA
+
+A required external binary since unit 06, and the version is pinned: Rego syntax
+differs between OPA 0.x and 1.x, and a bundle authored against one fails — or worse,
+evaluates differently — on the other. This bundle is **1.x** (`import rego.v1`, bare
+`if`/`contains`), developed against **1.19.0**.
+
+```bash
+# Any 1.x binary on PATH works; the sidecar also looks in .tools/ and at $ZTMG_OPA_BIN
+python -m scripts.opa_sidecar          # serve policies/rego on 127.0.0.1:8181
+opa test policies/                     # the policy's own suite — no Python involved
+python -m scripts.sync_policy_revision # restamp after editing any .rego
+```
+
+The gateway never launches OPA. In a real deployment the sidecar is somebody else's
+process, and a gateway that could start its own policy engine could also restart one
+it had just found unhealthy — which is how fail-closed becomes fail-eventually.
+
+Tests that need it **skip** when it is absent, and skips are reported as skips. A
+suite that passed quietly without OPA would be reporting on a gateway that has no
+policy engine at all.

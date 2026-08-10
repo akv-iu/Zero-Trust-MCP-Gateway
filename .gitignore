@@ -6,3 +6,6 @@ var/
 .hypothesis/
 .pytest_cache/
 .ruff_cache/
+
+# OPA and other pinned developer binaries; fetched, never committed.
+.tools/

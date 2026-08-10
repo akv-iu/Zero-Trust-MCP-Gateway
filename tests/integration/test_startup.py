@@ -12,6 +12,7 @@ against a live child: a mock would let the sequence be wrong and still pass.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -19,21 +20,40 @@ import pytest
 
 from gateway import registry, startup
 from gateway.errors import ConfigError, ReasonCode
+from scripts.opa_sidecar import find_binary, sidecar
 
 REPO = Path(__file__).resolve().parents[2]
 CONFIG = REPO / "config" / "gateway.toml"
 
 pytestmark = pytest.mark.anyio
 
+needs_opa = pytest.mark.skipif(
+    find_binary() is None,
+    reason="OPA not found — REPORTED AS SKIPPED, never counted as a pass",
+)
+"""Since unit 06, `serve` obtains a policy engine BEFORE it spawns the child, so
+readiness genuinely requires OPA. Tests that reach readiness need the sidecar; the two
+that assert `serve` refuses EARLIER — bad protocol version, unwritable sink — do not,
+and that they still run without OPA is itself evidence of the ordering."""
 
-def _config_with(tmp_path: Path, **child_env: str) -> Path:
-    """A copy of the shipped config writing its audit somewhere disposable."""
+
+@pytest.fixture(scope="module")
+def opa_url() -> Iterator[str]:
+    with sidecar() as url:
+        yield url
+
+
+def _config_with(tmp_path: Path, opa_url: str) -> Path:
+    """The shipped config, writing its audit somewhere disposable and pointing at the
+    sidecar this module started rather than at a fixed port."""
     text = (
-        (CONFIG)
-        .read_text("utf-8")
+        CONFIG.read_text("utf-8")
         .replace(
             'path = "var/audit.jsonl"',
             f"path = {json.dumps(str(tmp_path / 'audit.jsonl'))}",
+        )
+        .replace(
+            'base_url = "http://127.0.0.1:8181"', f"base_url = {json.dumps(opa_url)}"
         )
     )
     out = tmp_path / "gateway.toml"
@@ -108,8 +128,9 @@ async def test_serve_refuses_a_registry_approved_for_another_protocol(
     assert not (tmp_path / "audit.jsonl").exists()
 
 
+@needs_opa
 async def test_serve_verifies_schemas_before_yielding_deps(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, opa_url: str
 ) -> None:
     """REG-006/REG-009: the registry is sealed by the time anything can be served."""
     from fixtures.build_tree import build
@@ -120,7 +141,7 @@ async def test_serve_verifies_schemas_before_yielding_deps(
     monkeypatch.setenv("FIXTURE_ALLOW_WEAK_ISOLATION", "1")
     monkeypatch.delenv("FIXTURE_MODE", raising=False)
 
-    async with startup.serve(_config_with(tmp_path)) as deps:
+    async with startup.serve(_config_with(tmp_path, opa_url)) as deps:
         assert deps.registry.quarantined == {}, "a clean fixture must quarantine nothing"
         # The property REG-009 exists for: a call is now possible at all.
         assert len(deps.registry.visible_tools(_ctx(), lambda c, t: True)) == 6
@@ -136,8 +157,9 @@ async def test_serve_verifies_schemas_before_yielding_deps(
     assert ready["detail"]["approved_tools"] == "6"
 
 
+@needs_opa
 async def test_serve_quarantines_a_drifted_tool_and_audits_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, opa_url: str
 ) -> None:
     """Spec test 3's missing half: the quarantine happens during real STARTUP.
 
@@ -153,7 +175,7 @@ async def test_serve_quarantines_a_drifted_tool_and_audits_it(
     monkeypatch.setenv("FIXTURE_ALLOW_WEAK_ISOLATION", "1")
     monkeypatch.setenv("FIXTURE_MODE", "drift")
 
-    async with startup.serve(_config_with(tmp_path)) as deps:
+    async with startup.serve(_config_with(tmp_path, opa_url)) as deps:
         # Drift does NOT prevent startup — a gateway that refuses to boot on drift is
         # one that gets started with the check disabled (`_tech/04` §4).
         assert deps.registry.quarantined == {"read_file": ReasonCode.REG_SCHEMA_DRIFT}

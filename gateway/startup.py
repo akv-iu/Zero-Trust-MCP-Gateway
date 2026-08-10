@@ -23,7 +23,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from gateway import bridge, registry
+from gateway import bridge, policy, registry
 from gateway.audit import AuditSink
 from gateway.audit_schema import LifecycleEvent
 from gateway.config import Config
@@ -103,30 +103,50 @@ async def serve(config_path: str | Path) -> AsyncGenerator[Deps]:
         except OSError as e:
             raise ConfigError(f"audit sink is not writable: {cfg.audit.path}") from e
 
-        async with bridge.upstream(reg.server.child_config(cfg.child)) as up:
-            advertised = [
-                t.model_dump(by_alias=True, exclude_none=True)
-                for t in (await up.list_tools()).tools
-            ]
-            for event in reg.verify_schemas(advertised):
-                # REG-006: every drift event is audited. Written before readiness so
-                # a quarantine can never be discovered only from a denial later.
-                sink.write_sync(event)
+        # POLICY-010 / POLICY-014, and it happens BEFORE the child is spawned: a
+        # gateway that cannot obtain a decision must never reach the point of having
+        # an upstream to route to. `check_bundle` also refuses when the running OPA
+        # is serving a different copy of `policies/rego` than the one on disk, which
+        # is the failure `--watch` being off makes easy and silent.
+        revision = policy.bundle_revision()
+        engine = policy.PolicyEngine(policy.client_for(cfg.policy), revision)
+        try:
+            await policy.publish_config(engine.client, cfg)
+            await policy.check_bundle(engine.client, revision)
+        except BaseException:
+            await engine.client.aclose()
+            raise
+
+        try:
+            async with bridge.upstream(reg.server.child_config(cfg.child)) as up:
+                advertised = [
+                    t.model_dump(by_alias=True, exclude_none=True)
+                    for t in (await up.list_tools()).tools
+                ]
+                for event in reg.verify_schemas(advertised):
+                    # REG-006: every drift event is audited. Written before readiness
+                    # so a quarantine can never be discovered only from a denial later.
+                    sink.write_sync(event)
+
+                sink.write_sync(
+                    LifecycleEvent(
+                        ts=datetime.now(UTC),
+                        kind="ready",
+                        detail={
+                            "server_id": reg.server.id,
+                            "approved_tools": str(len(reg.tools)),
+                            "quarantined": ",".join(sorted(reg.quarantined)) or "none",
+                            "policy_revision": revision,
+                        },
+                    )
+                )
+                yield Deps(config=cfg, registry=reg, opa=engine, upstream=up, audit=sink)
 
             sink.write_sync(
-                LifecycleEvent(
-                    ts=datetime.now(UTC),
-                    kind="ready",
-                    detail={
-                        "server_id": reg.server.id,
-                        "approved_tools": str(len(reg.tools)),
-                        "quarantined": ",".join(sorted(reg.quarantined)) or "none",
-                    },
-                )
+                LifecycleEvent(ts=datetime.now(UTC), kind="shutdown", detail={})
             )
-            yield Deps(config=cfg, registry=reg, opa=None, upstream=up, audit=sink)
-
-        sink.write_sync(LifecycleEvent(ts=datetime.now(UTC), kind="shutdown", detail={}))
+        finally:
+            await engine.client.aclose()
     finally:
         sink.close()
 

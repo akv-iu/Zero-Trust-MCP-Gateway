@@ -239,6 +239,37 @@ a deny rule matched against a name that does not exist yet.
 
 ---
 
+## 10f. Policy codes no corpus row can reach
+
+Six `POLICY_*` codes are decided by the state of the policy ENGINE rather than by the
+content of a request, so no row of tool plus arguments can produce one:
+
+| Code | What produces it |
+|---|---|
+| `POLICY_UNAVAILABLE` | OPA unreachable — the sidecar is terminated in `test_policy_opa.py::test_1_...` |
+| `POLICY_TIMEOUT` | evaluation past the deadline |
+| `POLICY_RESULT_INVALID` | a malformed decision document |
+| `POLICY_DEFAULT_DENY` | OPA answering 200 with no `result` at all |
+| `POLICY_REVISION_UNKNOWN` | a decision that cannot be attributed to a bundle |
+| `POLICY_OBLIGATION_CLAMPED` | advisory, audited alongside a real code |
+
+They are **not** removed, because unlike `REG_SERVER_UNKNOWN` each has a live
+request-time raise path in `gateway/policy.py`. What they lack is a *corpus* row,
+which needs a broken or differently-configured OPA per row — the same limitation the
+four startup-conditioned `REG_*` codes have (§10c), and it lifts the same way, when
+unit 11's protected client can launch a gateway per scenario. Until then all six are
+covered in `tests/unit/test_policy.py` against a stub transport that returns exactly
+the answers a correct OPA never gives.
+
+`POLICY_PROHIBITED` was in this list and is now reachable: `fs-prohibited-001` reads
+`traps/.keep` as `auditor` — the principal who may read everything else, so the denial
+can only come from the prohibition rule and not from a missing grant.
+
+**Shadow mode** stays cut (`_specs/06` §3). It is genuinely useful and genuinely v2;
+the trigger is a policy change big enough that landing it blind is the risk.
+
+---
+
 ## 11. Kept in v1 despite being cuttable
 
 Recorded so they are not cut in a later round of enthusiasm:
