@@ -15,6 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import anyio
+
 from gateway import canonicalize, identity, policy, protocol, registry, response, router
 from gateway.audit import AuditBuilder, AuditSink
 from gateway.config import Config
@@ -75,13 +77,27 @@ async def handle(env: RawEnvelope, deps: Deps) -> Untrusted[JsonObject]:
             # comment saying "unit 06 must agree" is not enforcement (Codex review).
             raise PolicyDenial(ReasonCode.POLICY_RESULT_INVALID)
         with builder.stage(Stage.ROUTE):
-            raw = await router.forward(req, drv, dec, deps.upstream, deps.config.router)
+            # `route`, not `forward`: stage 07 gates, writes its intent record ahead of
+            # the call (AUDIT-009), and dispatches — `tools/list` is filtered against
+            # `data.gateway.discoverable` rather than forwarded verbatim (REG-010).
+            # It writes its own audit fields, because a timeout and a cancellation
+            # leave by raising and would otherwise contribute nothing.
+            raw = await router.route(req, ctx, drv, dec, deps)
         with builder.stage(Stage.RESPONSE):
             out = response.validate(raw, req, dec.obligations, deps.config.response)
         builder.set_outcome("allowed")
         return out
     except GatewayDenial as d:
         builder.record_denial(d)
+        raise
+    except anyio.get_cancelled_exc_class():
+        # The client vanished. This is not an error and must not be recorded as one:
+        # ROUTE-010 keeps `cancelled` distinct from `error` because a request that was
+        # abandoned and one that failed mean different things to the report, and the
+        # upstream side effect may have landed either way. Re-raised immediately —
+        # swallowing a cancellation breaks anyio's cancel semantics. The `finally`
+        # below still writes, because the sink shields its own write.
+        builder.record_cancellation()
         raise
     except Exception as e:  # internal defect -> deny, never allow (CONV-004)
         builder.record_internal_error(e)

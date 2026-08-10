@@ -16,9 +16,17 @@ unit must do is in [`_specs/`](_specs/); how to build it is in [`_tech/`](_tech/
 
 Units built: foundation, 10 (fixture), 11 (harness skeleton), 09 (audit), 01 (HTTP
 edge + stdio upstream bridge), 02 (protocol guard), 03 (identity), 04 (registry),
-05 (filesystem canonicalizer), 06 (OPA policy broker + Rego bundle). Remaining units
-are stubs that raise `NotImplementedError` naming their owner — a request reaching one
-is denied, never passed. Build order and state: [PLAN.md §4.2](PLAN.md).
+05 (filesystem canonicalizer), 06 (OPA policy broker + Rego bundle), 07 (upstream
+router). Remaining units are stubs that raise `NotImplementedError` naming their
+owner — a request reaching one is denied, never passed. Build order and state:
+[PLAN.md §4.2](PLAN.md).
+
+**Unit 07 is built and not done.** Its acceptance tests were skipped at the author's
+instruction and are owed before it counts. It is also the unit that opens the
+side-effect path, so until unit 08 lands an allowed call reaches the child and *then*
+fails on the response guard's stub — the effect happens and the client is told the
+request failed. The write-ahead audit record added in unit 07 is what keeps that
+visible rather than silent ([threat model §2.2](docs/threat-model.md)).
 
 The client edge is **Streamable HTTP on loopback**; only the upstream leg to the
 child server is stdio ([ADR-001](_specs/ADR-001-transport-and-mirrored-metadata.md)).

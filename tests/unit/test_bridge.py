@@ -15,7 +15,7 @@ import anyio
 import pytest
 
 from fixtures.build_tree import build
-from gateway.bridge import _child_env, upstream
+from gateway.bridge import UpstreamHandle, _child_env, upstream
 from gateway.config import ChildConfig
 from gateway.errors import GatewayDenial, ReasonCode, RouteDenial
 
@@ -302,25 +302,16 @@ async def test_a_crashed_child_denies_at_the_call_site(
             assert up.alive is False, "a dead child must not be offered for reuse"
 
 
-async def test_cancellation_notification_is_accepted_by_the_child(
-    cfg: ChildConfig,
-) -> None:
-    """The notification must be a real typed ClientNotification.
+def test_the_bridge_offers_no_cancellation_of_its_own() -> None:
+    """Unit 07's finding, kept where the deleted method used to live.
 
-    A malformed dict was previously sent inside a bare `except Exception: pass`, so
-    it failed silently and the audit trail would have claimed an upstream
-    cancellation that never happened.
+    `UpstreamHandle.cancel` sent `notifications/cancelled` with whatever id it was
+    handed, and its only intended caller could only have handed it the CLIENT's
+    JSON-RPC id — an id the child has never seen. The SDK numbers its own outgoing
+    requests and already sends the notification itself, shielded, on cancellation.
+    Re-adding this method is how that correct behaviour gets shadowed by a wrong one.
     """
-    with anyio.fail_after(30):
-        async with upstream(cfg) as up:
-            assert await up.cancel(request_id=1, reason="test") is True
-
-
-async def test_cancel_reports_failure_when_the_child_is_gone(cfg: ChildConfig) -> None:
-    with anyio.fail_after(30):
-        async with upstream(cfg) as up:
-            pass
-        assert await up.cancel(request_id=1) is False
+    assert not hasattr(UpstreamHandle, "cancel")
 
 
 async def test_a_caller_denial_survives_the_context_manager(cfg: ChildConfig) -> None:

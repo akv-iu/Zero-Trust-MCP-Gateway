@@ -95,7 +95,9 @@ Its contract is therefore narrow and absolute: it runs **if and only if** a vali
 
 ## 7. Configuration surface
 
-Upstream timeout ceiling; response byte ceiling; cancellation grace period. All bounded by unit 01's total request deadline.
+Upstream timeout ceiling; response byte ceiling. All bounded by unit 01's total request deadline, which nests around them rather than being restated here.
+
+~~cancellation grace period~~ — removed when the unit landed. The requirement it served (ROUTE-010) is met by the SDK, which sends `notifications/cancelled` on its own shielded, bounded write; there is no gateway-side window left to size. `_specs/90-deferred-register.md` §10h has the finding and the revival trigger.
 
 ---
 

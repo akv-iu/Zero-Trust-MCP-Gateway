@@ -462,7 +462,7 @@ def test_records_are_newline_delimited_on_every_platform(sink: AuditSink) -> Non
 
 def test_schema_version_is_stamped(sink: AuditSink) -> None:
     sink.write_sync(LifecycleEvent(ts=datetime.now(UTC), kind="startup"))
-    assert _lines(sink)[0]["schema_version"] == 1
+    assert _lines(sink)[0]["schema_version"] == 2
 
 
 async def test_null_fields_are_present_not_omitted(sink: AuditSink) -> None:

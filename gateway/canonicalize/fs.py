@@ -411,7 +411,7 @@ def derive(
         # policy actually authorised — unit 07 recomputes it before forwarding
         # (ROUTE-002), and a path that changed between the two stages breaks the
         # comparison rather than travelling.
-        arg_hash=hashing.hash_obj({**req.arguments, "canonical_path": canonical}),
+        arg_hash=hashing.argument_hash(req.arguments, canonical),
         raw_hash=hashing.sha256_hex(raw.encode("utf-8")),
     )
 
@@ -439,6 +439,11 @@ def _no_resource(req: CanonicalRequest) -> DerivedAttributes:
     Inventing a placeholder path instead would be worse in both directions — one that
     happens to be inside a root grants discovery on the strength of a fiction, and one
     outside denies `tools/list` outright.
+
+    The `arg_hash` is built by the SAME function the resource path uses, with the empty
+    canonical path. `tools/list` is forwarded upstream like anything else, so unit 07
+    checks it for divergence like anything else, and a second hashing shape here would
+    have made that check branch on which kind of request it was holding.
     """
     return DerivedAttributes(
         canonical_path="",
@@ -446,7 +451,7 @@ def _no_resource(req: CanonicalRequest) -> DerivedAttributes:
         operation="read",
         classification="",
         exists=False,
-        arg_hash=hashing.hash_obj({**req.arguments}),
+        arg_hash=hashing.argument_hash(req.arguments, ""),
         raw_hash=hashing.sha256_hex(b""),
     )
 

@@ -67,3 +67,22 @@ def hash_obj(obj: Any) -> str:
 def fingerprint(obj: Any) -> str:
     """Versioned fingerprint, e.g. ``v1:3f2a...`` (REG-005)."""
     return f"{FINGERPRINT_VERSION}:{hash_obj(obj)}"
+
+
+def argument_hash(arguments: Mapping[str, Any], canonical_path: str) -> str:
+    """What policy authorised, as one value. CANON-011, compared again by ROUTE-002.
+
+    Lives here rather than in unit 05 so that unit 07 can recompute it without
+    importing the canonicalizer, which owns filesystem access the router must not
+    have (ROUTE-003). One function, two callers, and that is the whole point:
+    `_tech/07` §2 warns that recomputing the rule at the router from a *different*
+    source makes the comparison agree with itself. The inputs are re-read at stage
+    07 — the arguments about to be forwarded, against the path stage 05 resolved —
+    so a mutation between the two stages breaks the hash instead of travelling.
+
+    `canonical_path` is "" for a request that names no resource (`tools/list`), and
+    the key is still present: dropping it for that case would give one shape for
+    discovery and another for calls, and the router would need to know which it was
+    holding before it could check anything.
+    """
+    return hash_obj({**arguments, "canonical_path": canonical_path})

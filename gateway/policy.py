@@ -446,6 +446,52 @@ def validate_result(
     )
 
 
+async def discoverable(
+    opa: Any, cfg: PolicyConfig, ctx: AuthzContext, operation: str
+) -> bool:
+    """REG-010's `could_ever_allow`, over its own entrypoint and its own input.
+
+    Not "may this principal call this tool on this resource" but "is there ANY resource
+    for which they could". `_tech/04` §6 warns against approximating it by calling
+    `decision` with a placeholder path, in both directions: a placeholder that happens
+    to be denied hides a tool the principal can legitimately use, and one that happens
+    to be allowed reveals a tool they cannot.
+
+    So the input carries only what `discoverable.rego` reads — the principal's roles
+    and the operation class the registry assigned the tool. No path, because there is
+    no path in the question.
+
+    Every failure raises. Returning `False` on an unreachable OPA would turn a broken
+    policy engine into a short `tools/list`, which is indistinguishable from a correct
+    answer for a principal with few grants — the one fail-closed shape that produces a
+    plausible lie instead of a denial.
+    """
+    if not isinstance(opa, PolicyEngine):
+        raise PolicyDenial(ReasonCode.POLICY_UNAVAILABLE, detail="no OPA engine")
+    payload = {
+        "input": {
+            "principal": {"roles": list(ctx.roles)},
+            "arguments": {"operation": operation},
+        }
+    }
+    try:
+        with anyio.fail_after(cfg.timeout_ms / 1000):
+            response = await opa.client.post(cfg.discoverable_path, json=payload)
+            response.raise_for_status()
+            result: Any = response.json().get("result")
+    except TimeoutError as e:
+        raise PolicyDenial(ReasonCode.POLICY_TIMEOUT, detail=str(e)) from e
+    except (httpx.HTTPError, json.JSONDecodeError, ValueError) as e:
+        raise PolicyDenial(ReasonCode.POLICY_UNAVAILABLE, detail=str(e)) from e
+    if not isinstance(result, bool):
+        # `default discoverable := false` makes the rule total, so a non-boolean means
+        # the bundle OPA is serving is not the one this build was written against.
+        raise PolicyDenial(
+            ReasonCode.POLICY_RESULT_INVALID, detail=f"discoverable={result!r}"
+        )
+    return result
+
+
 def clamp(raw: Any, cfg: PolicyConfig) -> tuple[Obligations, bool]:
     """POLICY-007. `min` only: policy may NARROW a limit, never widen one.
 
@@ -524,6 +570,7 @@ __all__ = [
     "check_bundle",
     "clamp",
     "client_for",
+    "discoverable",
     "evaluate",
     "publish_config",
     "validate_result",

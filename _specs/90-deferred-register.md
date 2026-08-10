@@ -270,6 +270,64 @@ the trigger is a policy change big enough that landing it blind is the risk.
 
 ---
 
+## 10g. The response byte ceiling is detection, not prevention
+
+**Deferred:** a streaming abort on `max_response_bytes` (ROUTE-006).
+**Shipped instead:** the response is measured once it is materialised, and an oversized
+one is denied with `ROUTE_RESPONSE_TOO_LARGE`.
+
+`_tech/07` §5 asks the count to happen at the transport layer so the reader aborts
+mid-stream, and pre-authorises this fallback on condition it be stated rather than
+substituted silently. The installed SDK forecloses the streaming version:
+`mcp.client.stdio.stdio_client` wraps the child's stdout in a `TextReceiveStream`,
+accumulates until a newline, and parses a **whole line** into a `SessionMessage`
+before anything downstream receives a byte. There is no hook between the pipe and the
+parsed message — `stdio_client` owns the reader and exposes only the message stream.
+
+What this changes about the claim, stated so a reader does not inherit the stronger
+one: **an oversized response is detected and denied; it is not prevented from being
+buffered.** A hostile child can still make the gateway hold its whole reply in memory
+once. The limit stops that reply from reaching the client and stops it being counted
+as a success; it does not make the gateway immune to a memory-exhaustion attempt by a
+child that is already inside the trust boundary the threat model draws around it
+(§1.4 — the protected server is trusted to be the registered binary).
+
+**Trigger:** replacing `stdio_client` with a transport this project owns — which is
+also what an HTTP upstream leg would need, since that is a second transport and the
+counting would have to live somewhere common. Do not attempt it as a wrapper around
+the SDK's stream: that is where the buffering already happened.
+
+---
+
+## 10h. `UpstreamHandle.cancel` — REMOVED, not deferred
+
+Unit 01 built `bridge.UpstreamHandle.cancel(request_id, reason)` to send
+`notifications/cancelled` on an edge-side disconnect, and unit 07 was to be its only
+caller. It is deleted, for two reasons that compound.
+
+The pinned SDK already does it. `JSONRPCDispatcher.send_raw_request` catches the
+caller's cancellation and sends the notification through a **shielded**, bounded write
+before re-raising (`cancel_on_abandon` defaults to true). anyio propagates the edge's
+cancellation into the in-flight `call_tool`, so the notification goes out with no
+gateway code involved. Verified by running the installed SDK over memory streams and
+observing the bytes, not by reading it — ADR-002's process lesson.
+
+Ours would have sent the **wrong id**. The only id unit 07 holds is
+`CanonicalRequest.jsonrpc_id`, the CLIENT's. The SDK numbers its own outgoing requests
+independently, so that notification would have named an id the child never saw — or,
+worse, one belonging to a different request. A cancellation that silently cancels
+nothing, audited as a cancellation that succeeded, is exactly the lying audit trail
+the method's own docstring said it existed to prevent.
+
+`RouterConfig.cancellation_grace_ms` went with it: nothing sizes a window the SDK
+bounds itself, and a knob nothing reads fails CONV-015 more loudly than a missing one.
+
+**Trigger:** an upstream transport whose SDK does not send the courtesy cancel, or an
+SDK upgrade that drops it. The second is the dangerous one because it is silent —
+`gateway/router.py` records the owed tripwire test.
+
+---
+
 ## 11. Kept in v1 despite being cuttable
 
 Recorded so they are not cut in a later round of enthusiasm:

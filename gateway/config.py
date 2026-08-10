@@ -229,7 +229,11 @@ class RouterConfig(BaseModel):
 
     max_timeout_ms: int = 10_000
     max_response_bytes: int = 4_194_304
-    cancellation_grace_ms: int = 1_000
+    # `cancellation_grace_ms` was here and is gone, with `bridge.UpstreamHandle.cancel`
+    # that would have consumed it: the SDK sends `notifications/cancelled` itself, on
+    # its own bounded shielded write, so the gateway has no cancellation window to
+    # size. A knob nothing reads fails CONV-015 more loudly than a missing one — the
+    # same reason `canonicalize.max_resolution_depth` went.
 
 
 class ResponseConfig(BaseModel):

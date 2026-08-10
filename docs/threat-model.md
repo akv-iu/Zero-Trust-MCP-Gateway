@@ -153,6 +153,16 @@ owner, so a request reaching one is denied as `INTERNAL_ERROR` rather than passe
 | A policy engine that is down, slow, or answering nonsense | Unit 06 broker; absence of an allow is a deny | **The sidecar process is killed** and every protected call denies; a stub transport supplies every malformed answer a correct OPA never gives |
 | A policy that has been edited since the engine started | Bundle content hash the running OPA must echo | `--watch` is off by design, so this is otherwise silent; startup refuses |
 | Evidence loss under cancellation | Unit 09 shielded write | Passes only with the production shield present |
+| A side effect caused with no decision behind it | Unit 07 gate: a validated allow carrying **this** `request_id`, or nothing moves | Typed comparison on a frozen `Decision`; the router has no I/O capability of its own, enforced by an AST walk of the module |
+| Arguments changed between the decision and the call | Unit 07 re-hashes what is about to be forwarded against the path unit 05 resolved | `ROUTE_AUTHORIZATION_DIVERGENCE`; the outbound message is derived from the canonical request, so divergence is unrepresentable and the check is the refactor guard |
+| A tool listed that the principal could never call | Unit 07 filters the `tools/list` **response** against `data.gateway.discoverable` | REG-010's second half; the question asked is "any resource at all", never a placeholder path |
+| An allowed call running unbounded, or answering unbounded | Unit 07 enforces the obligations unit 06 returned, records them as enforced | `ROUTE_TIMEOUT` / `ROUTE_RESPONSE_TOO_LARGE`; no retry on any path |
+| A side effect whose evidence does not survive | Unit 07 write-ahead `upstream_attempt`, fsynced before the call | Closes §2.3's gap: an unwritable sink now denies before the effect, not after |
+
+**Unit 07's rows are built and not yet proved.** Its acceptance tests were skipped at
+the author's instruction; until they land these are design claims about code that
+runs, not measured evidence, and they should be read that way. `PLAN.md` §4.2 carries
+what is owed.
 
 Two things to read before the pass count. Unit 05's symlink rows (spec tests 6–8) need
 a platform that will create symlinks; where it will not — Windows without Developer
@@ -163,33 +173,44 @@ need the OPA binary and skip without it. A skip is never counted as a pass.
 
 | Threat | Planned control | State |
 |---|---|---|
-| A tool appearing in `tools/list` that the principal could never call | REG-010 filtering; `data.gateway.discoverable` exists and is tested, but nothing filters the RESPONSE yet | unit 07 |
-| An allowed call exceeding its obligations | Unit 07 router enforces what unit 06 returned | stub |
 | An oversized or uncorrelated upstream response | Unit 08 response guard | stub |
+| An upstream response that is fabricated, unsolicited, or answers a different id | Unit 08, consuming the `malformed` / `wrong_id` / `unsolicited` wire modes | stub |
 
-Unit 06 decides; **nothing enforces its decision yet.** `router.forward` is still a
-stub, so an allow reaches no upstream and a deny prevents nothing that was going to
-happen anyway. The corpus still scores `direct` (undefended) end-to-end.
+**Nothing completes end to end yet, and the gap moved rather than closed.** Unit 07
+forwards, so an allowed call now reaches the child and causes its side effect — and
+then dies at `response.validate`'s `NotImplementedError`, which denies. The client is
+told the request failed while the effect has already happened. That is the same shape
+§2.3 describes and it is temporary: it exists only while unit 08 is a stub, and the
+`upstream_attempt` record makes it visible rather than silent, because the log names
+the side effect that was attempted even when the request event says `error`.
 
-The corpus rows for these already exist and are scored `direct` (undefended), which
-is the "before" measurement. None of them yet demonstrates a gateway defence.
+Until unit 11's protected client exists the corpus is still scored `direct`
+(undefended), which is the "before" measurement. No row yet demonstrates a gateway
+defence end to end.
 
 ### 2.3 Fail-closed, and where it stops
 
 An unexpected exception denies. An unavailable policy engine denies. An unwritable
 audit sink raises `AuditFailure`, which denies the response.
 
-**That last one is not atomic, and the earlier wording overstated it.**
-`pipeline.handle` runs `router.forward` and only then writes the event in its
-`finally`. If the sink fails after a mutating call has already reached the child,
-the client is correctly told the request failed — but the upstream effect may have
-happened and no record of it survives. AUDIT-009 asks for the operation to be denied
-when its event cannot be persisted; for read-only calls that holds, and for mutating
-ones it does not.
+**That last one was not atomic, and unit 07 closed it by ordering.**
+`pipeline.handle` writes its `RequestEvent` in a `finally`, which runs after the
+upstream call. If the sink failed once a mutating call had reached the child, the
+client was correctly told the request failed while the effect had happened and no
+record of it survived. AUDIT-009 asks for the operation to be denied when its event
+cannot be persisted; that held for reads and not for writes.
 
-Closing it needs a write-ahead record before `router.forward`, paired with the
-terminal one — the shape the fixture's own op-log already uses, and for the same
-reason. Tracked against unit 07, which is where the ordering lives.
+Stage 07 now writes an `upstream_attempt` record — a separate event type, fsynced —
+**before** the call, for every forwarded request rather than only mutating ones. An
+unwritable sink therefore denies before the upstream is contacted. The terminal record
+still follows, and the two together are the same paired shape the fixture's own
+operation log uses, for the same reason: one record says what was about to happen, the
+other says what did.
+
+What remains, and it is smaller: a sink that accepts the attempt record and then fails
+on the terminal one leaves a request whose outcome is unknown. That is now a *visible*
+hole rather than a silent one — the attempt record names the side effect, and
+`completeness()` counts request events, so the ratio drops and points at it.
 
 ---
 

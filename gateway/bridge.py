@@ -179,38 +179,22 @@ class UpstreamHandle:
                 ReasonCode.ROUTE_UPSTREAM_UNAVAILABLE, detail=f"stdio: {e!r}"
             ) from e
 
-    async def cancel(
-        self, request_id: str | int, reason: str = "client disconnected"
-    ) -> bool:
-        """Translate an edge-side disconnect into stdio's cancellation notification.
-
-        Transport asymmetry (ADR-001 §4): on Streamable HTTP the client cancels by
-        closing the SSE stream; on stdio `notifications/cancelled` is mandatory. The
-        gateway bridges the two.
-
-        Returns whether the notification was sent, so a caller can audit the
-        difference between "cancelled upstream" and "gave up locally". A silently
-        swallowed failure here would make the audit trail lie.
-        """
-        if not self.alive:
-            # Writing to a torn-down stream can succeed into a buffer nobody reads,
-            # which would report a cancellation that never reached the child.
-            return False
-        # ClientNotification is a union ALIAS in mcp_types, not a wrapper class —
-        # calling it raises TypeError. Send the concrete notification directly.
-        notification = mcp_types.CancelledNotification(
-            method="notifications/cancelled",
-            params=mcp_types.CancelledNotificationParams(
-                request_id=request_id, reason=reason
-            ),
-        )
-        try:
-            await self._session.send_notification(notification)
-            return True
-        except (anyio.BrokenResourceError, anyio.ClosedResourceError, OSError):
-            # The child is already gone; the request fails regardless.
-            self.alive = False
-            return False
+    # THERE IS NO `cancel()` HERE, and its absence is the finding (ROUTE-010).
+    #
+    # One was built for unit 07 to call on an edge-side disconnect, translating the
+    # transport asymmetry ADR-001 §4 describes: Streamable HTTP cancels by closing the
+    # stream, stdio requires `notifications/cancelled`. It is deleted because the
+    # pinned SDK already does exactly that — `JSONRPCDispatcher.send_raw_request`
+    # catches the caller's cancellation and sends the notification through a SHIELDED
+    # write — and because ours could only ever have sent the CLIENT's JSON-RPC id.
+    # The child has never seen that id. The SDK numbers its own outgoing requests, so
+    # the notification would have cancelled nothing, or cancelled something else.
+    #
+    # Verified by running the installed SDK, not inferred from reading it (ADR-002's
+    # process lesson). The behavioural assertion that would catch an SDK upgrade
+    # dropping it is owed, not written — see `router.py`'s module docstring. Revival
+    # trigger: a transport whose SDK does not do this
+    # (`_specs/90-deferred-register.md` §10h).
 
 
 def _child_env(cfg: ChildConfig) -> dict[str, str]:

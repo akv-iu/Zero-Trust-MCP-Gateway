@@ -124,7 +124,6 @@ cache_enabled = false
 [router]                     # 07 - ceilings MUST equal policy's clamp values
 max_timeout_ms = 10000
 max_response_bytes = 4194304
-cancellation_grace_ms = 1000
 
 [response]                   # 08
 max_bytes = 4194304

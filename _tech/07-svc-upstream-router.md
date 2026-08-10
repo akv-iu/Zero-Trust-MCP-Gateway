@@ -3,6 +3,24 @@
 **Pairs with:** [`_specs/07-svc-upstream-router.md`](../_specs/07-svc-upstream-router.md)
 **Module:** `gateway/router.py`
 
+> **Corrections, applied when unit 07 landed.** The spec wins over this sheet
+> (CLAUDE.md), and these are places where this sheet was wrong about the platform
+> rather than about the requirement.
+>
+> - **§4** names the anyio attribute `scope.cancel_caught`. It is `cancelled_caught`.
+> - **§5**'s `BoundedReader` cannot be built against the installed SDK, and §5's own
+>   fallback is what shipped. See [90 §10g](../_specs/90-deferred-register.md) — the
+>   claim is now *detection*, not prevention, and that is written into the module.
+> - **§6** says "verify at spike time" whether the child observes the cancellation.
+>   Verified: it does, and the SDK sends it, so the gateway must not. `_specs/01`'s
+>   `UpstreamHandle.cancel` is deleted rather than called — it could only ever have
+>   sent the client's JSON-RPC id, which the child has never seen.
+>   [90 §10h](../_specs/90-deferred-register.md).
+> - **§8** lists `cancellation_grace_ms`. It is gone with the method that would have
+>   consumed it.
+> - **§9**'s test table stands and is **owed** — unit 07 shipped without tests at the
+>   author's instruction (`PLAN.md` §4.2).
+
 ---
 
 ## 1. Signature is the security control
