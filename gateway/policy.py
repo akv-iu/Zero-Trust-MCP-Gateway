@@ -432,6 +432,13 @@ def validate_result(
     obligations, clamped = clamp(doc.get("obligations"), cfg)
     return Decision(
         request_id=req.request_id,
+        # ROUTE-001: what this decision is an answer TO. Taken from the canonical
+        # request rather than from the OPA response — a decision that named its own
+        # subject could name the wrong one and still agree with itself. Unit 04 has
+        # already tied `req.tool_name` to an approved registry entry, so this is the
+        # approved name and not a client claim.
+        method=req.method,
+        tool_name=req.tool_name,
         decision=verdict,
         reason_code=reason.value,
         risk_tier=cast("RiskTier", tier),

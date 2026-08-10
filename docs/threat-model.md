@@ -83,10 +83,17 @@ path, then unit 07 forwards. Between resolution and use, another process can rep
 a component of that path. The gateway narrows the window; it does not close it. See
 [PLAN.md §7.4](../PLAN.md) for how this was reframed after the first review.
 
-The window is wider than "another process could win a race", and the honest version is
-worth stating: **unit 07 forwards the argument the client sent, not the path unit 05
-resolved.** The upstream resolves it again, itself, against its own base. Two
-consequences follow.
+**This used to be wider than a race, and that was a defect rather than a limitation.**
+Unit 07 forwarded the argument the client *sent*, not the path unit 05 resolved — so
+`%77orkspace/probe.txt` was percent-decoded, resolved and authorized as
+`workspace/probe.txt`, then handed to an upstream that joined the original string onto
+its own base literally. The gateway approved one file and the server acted on another,
+deterministically, with no race to lose and an audit record naming the file nothing
+touched. Found in review; unit 07 now substitutes `DerivedAttributes.relative_path`
+into the forwarded arguments, so what the child receives is what policy authorized.
+
+What remains is the genuine TOCTOU window. The upstream resolves that canonical path
+again, itself, against its own base. Two consequences follow.
 
 *The gateway and the upstream must agree on that base.* `canonicalize.base` is the
 directory the gateway resolves relative paths against; `$FIXTURE_ROOT` is the one the
@@ -95,6 +102,12 @@ another — an allow whose audit record names a resource nothing touched. Nothin
 runtime can notice, because both halves are internally consistent, so it is asserted
 where both configurations are visible
 (`test_shipped_config.py::test_the_canonicalize_base_matches_the_fixture_root`).
+
+That assertion carries more weight now than it did. The forwarded path is expressed
+*relative to `canonicalize.base`*, so the two bases are no longer merely expected to
+agree — the wire format depends on it. The compensation is that a root configured
+outside the base is refused at stage 05 (`CANON_RESOLUTION_FAILED`) rather than
+forwarded as a guess.
 
 *`exists` is a snapshot.* The create-versus-overwrite distinction is read from the
 filesystem at stage 05 and can be stale by stage 07. It cannot upgrade a privilege:
@@ -153,8 +166,11 @@ owner, so a request reaching one is denied as `INTERNAL_ERROR` rather than passe
 | A policy engine that is down, slow, or answering nonsense | Unit 06 broker; absence of an allow is a deny | **The sidecar process is killed** and every protected call denies; a stub transport supplies every malformed answer a correct OPA never gives |
 | A policy that has been edited since the engine started | Bundle content hash the running OPA must echo | `--watch` is off by design, so this is otherwise silent; startup refuses |
 | Evidence loss under cancellation | Unit 09 shielded write | Passes only with the production shield present |
-| A side effect caused with no decision behind it | Unit 07 gate: a validated allow carrying **this** `request_id`, or nothing moves | Typed comparison on a frozen `Decision`; the router has no I/O capability of its own, enforced by an AST walk of the module |
-| Arguments changed between the decision and the call | Unit 07 re-hashes what is about to be forwarded against the path unit 05 resolved | `ROUTE_AUTHORIZATION_DIVERGENCE`; the outbound message is derived from the canonical request, so divergence is unrepresentable and the check is the refactor guard |
+| A side effect caused with no decision behind it | Unit 07 gate: a validated allow carrying **this** `request_id`, **this** method and **this** tool, or nothing moves | Typed comparison on a frozen `Decision`; the router has no I/O capability of its own, enforced by an AST walk of the module |
+| One decision reused for a different tool | `Decision` carries `method` and `tool_name`; the router compares both | Found in review — a `write_file` decision was accepted for `append_file` on a matching id and argument hash |
+| The authorized path and the forwarded path differing | Unit 07 substitutes the path unit 05 resolved into the outbound arguments (ROUTE-004) | Found in review — `%77orkspace/f.txt` was authorized decoded and forwarded encoded; see §1.5 |
+| Arguments changed between the decision and the call | Unit 07 re-hashes what the client sent against the path unit 05 resolved | `ROUTE_AUTHORIZATION_DIVERGENCE`; hashed over the client's arguments, not the router's rewritten ones, or the check would compare its own output to itself |
+| A record that disagrees with the response | The request deadline lives in `pipeline.handle`, not at the edge | Found in review — an edge-side deadline reached the pipeline as an anonymous cancellation, so the record said `cancelled` while the client was told `ROUTE_TIMEOUT` |
 | A tool listed that the principal could never call | Unit 07 filters the `tools/list` **response** against `data.gateway.discoverable` | REG-010's second half; the question asked is "any resource at all", never a placeholder path |
 | An allowed call running unbounded, or answering unbounded | Unit 07 enforces the obligations unit 06 returned, records them as enforced | `ROUTE_TIMEOUT` / `ROUTE_RESPONSE_TOO_LARGE`; no retry on any path |
 | A side effect whose evidence does not survive | Unit 07 write-ahead `upstream_attempt`, fsynced before the call | Closes §2.3's gap: an unwritable sink now denies before the effect, not after |

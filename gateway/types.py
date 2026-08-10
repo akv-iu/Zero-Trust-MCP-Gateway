@@ -180,6 +180,23 @@ class DerivedAttributes(BaseModel):
     exists: bool
     arg_hash: str
     raw_hash: str
+    path_argument: str = ""
+    """Which argument named the resource, or "" for a request that names none.
+
+    Unit 07 has to rewrite that argument before forwarding (ROUTE-004) and must not
+    learn the tool vocabulary to do it. `""` is unambiguous: JSON object keys cannot
+    be empty in any approved schema, and `tools/list` sets it that way deliberately."""
+    relative_path: str = ""
+    """`canonical_path` expressed the way the UPSTREAM will read it — relative to
+    `canonicalize.base`, forward slashes.
+
+    This is what unit 07 forwards, and it is the whole reason it exists. `canonical_path`
+    is absolute and resolved, which is right for policy and for the audit record and
+    wrong for the wire: the upstream joins what it receives onto its own base. Sending
+    the client's original string instead is an authorization bypass rather than a
+    TOCTOU window — `%77orkspace/f.txt` is authorized as `workspace/f.txt` and acted on
+    as a literal `%77orkspace` directory, so the gateway approves one resource and the
+    server touches another, deterministically and with no race to lose."""
 
 
 class Obligations(BaseModel):
@@ -192,11 +209,23 @@ class Obligations(BaseModel):
 
 
 class Decision(BaseModel):
-    """06 -> 07. Carries request_id so ROUTE-001 is a typed check, not an audit."""
+    """06 -> 07. Carries what it decided ABOUT, so ROUTE-001 is a typed check.
+
+    `request_id`, `method` and `tool_name` together are the binding. The request id
+    alone was not enough and the gap was real: a decision made for `write_file` was
+    accepted by the router for `append_file`, because the id matched and the arguments
+    hashed the same — two different side effects on one authorization. A decision is
+    an answer to a specific question, so it carries the question.
+    """
 
     model_config = _FROZEN
 
     request_id: RequestId
+    method: str
+    tool_name: str | None
+    """`None` only for `tools/list`, mirroring `ResolvedTarget.tool_name`. Required
+    rather than defaulted: a default would let a decision be built without saying what
+    it authorised, and `None` compares equal to `None` for every discovery request."""
     decision: Literal["allow", "deny"]
     reason_code: str
     risk_tier: RiskTier

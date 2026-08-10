@@ -54,11 +54,11 @@ Two further limits worth stating before anyone reads the numbers:
   process is one trust domain; distinct principals must not be co-hosted outside a
   test harness ([threat model §1.2](docs/threat-model.md)).
 - **Path canonicalization is defense in depth, not a race-free guarantee.** The
-  primary filesystem control is the sandbox mount. The gateway resolves a path,
-  policy authorizes the resolved path, and then the *client's original string* is
-  forwarded — the upstream resolves it again, itself. That window cannot be closed
-  from here. v1 tests canonicalization correctness exhaustively and does **not**
-  claim TOCTOU safety ([threat model §1.5](docs/threat-model.md)).
+  primary filesystem control is the sandbox mount. The gateway resolves a path, policy
+  authorizes the resolved path, and the *resolved* path is what gets forwarded — the
+  upstream then resolves it again, itself, against the same base. That last window
+  cannot be closed from here. v1 tests canonicalization correctness exhaustively and
+  does **not** claim TOCTOU safety ([threat model §1.5](docs/threat-model.md)).
 - **The benchmark is co-located.** Client, gateway, policy engine and server run on
   one machine. The overhead figure is real and the caveat travels with it.
 - **Symlink tests skip on Windows** without Developer Mode, and skips are reported as

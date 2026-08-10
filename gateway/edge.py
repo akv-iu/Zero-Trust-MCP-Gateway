@@ -44,6 +44,20 @@ Handler = Callable[[RawEnvelope], Awaitable[Untrusted[JsonObject]]]
 
 _JSON = [(b"content-type", b"application/json")]
 
+HANDLER_BACKSTOP = 2.0
+"""Multiplier on `request_timeout_s` for the handler phase.
+
+`pipeline.handle` owns the operative request deadline, so that its expiry can be
+audited as a `timeout` rather than reaching this module as an anonymous cancellation
+(see `_handle`). This module still bounds the handler, because BRIDGE-004 is a
+property of the edge and not of whatever is plugged into it — a handler that does not
+enforce its own budget must still not hold a connection forever.
+
+Strictly greater than 1.0 on purpose: at 1.0 the two deadlines race, and every time
+this one won the request would be correctly refused with the reason code thrown away.
+A backstop that fires first is not a backstop.
+"""
+
 
 class Edge:
     """ASGI application. One endpoint, POST only."""
@@ -65,13 +79,31 @@ class Edge:
             await _error(send, ReasonCode.INTERNAL_ERROR, request_id)
 
     async def _handle(self, scope: Scope, receive: Receive, send: Send, rid: str) -> None:
-        # The deadline covers EVERYTHING, body read included. Starting it after the
-        # body would let a slow-loris client trickle bytes and hold a connection
-        # indefinitely — the read is exactly the part an attacker controls.
+        """Every phase is bounded. There is deliberately no single deadline over all.
+
+        There used to be one `fail_after` around the whole request, and it made the
+        handler's expiry indistinguishable from the client disconnecting: both reach
+        `pipeline.handle` as a bare anyio cancellation, so the audit record said
+        `cancelled` while the client was told `ROUTE_TIMEOUT`. ROUTE-010 exists to keep
+        those two apart, and a record that disagrees with the response is worse than
+        either one alone.
+
+        So the operative handler budget moved INSIDE `pipeline.handle`, where its
+        expiry is raised as a reason-coded denial and audited as `timeout`. This module
+        bounds every phase the pipeline cannot see — the body read, the wait for a
+        concurrency slot, the response write — and keeps a slower backstop over the
+        handler itself, because BRIDGE-004 is a property of the edge rather than of
+        whatever is plugged into it (`HANDLER_BACKSTOP`).
+
+        The worst case is therefore several budgets rather than one. That is the trade:
+        no phase is unbounded, which is what the slow-loris defence needs, and every
+        expiry is now attributable to the phase that ran out.
+        """
         try:
-            with anyio.fail_after(self.cfg.request_timeout_s):
-                await self._dispatch(scope, receive, send, rid)
+            await self._dispatch(scope, receive, send, rid)
         except TimeoutError:
+            # A phase this module bounds. No audit event: the request either never
+            # became an envelope, or the pipeline already wrote its own record.
             await _error(send, ReasonCode.ROUTE_TIMEOUT, rid)
 
     async def _dispatch(
@@ -96,16 +128,28 @@ class Edge:
         if not self._origin_ok(headers):
             return await _error(send, ReasonCode.PROTO_ORIGIN_REJECTED, rid)
 
-        body = await self._read_body(receive)
+        # The slow-loris surface, and the one phase an attacker fully controls.
+        with anyio.fail_after(self.cfg.request_timeout_s):
+            body = await self._read_body(receive)
 
-        async with self._slots:
+        # Bounded separately from the work it gates: a request queued behind four
+        # in-flight ones must not wait forever for a slot that never frees.
+        with anyio.fail_after(self.cfg.request_timeout_s):
+            await self._slots.acquire()
+        try:
             env = RawEnvelope(
                 request_id=rid,
                 received_at_ns=_now_ns(),
                 body=body,
                 metadata=headers,
             )
-            result = await self._run_watching_for_disconnect(env, receive)
+            # `pipeline.handle` owns the operative budget so its expiry can be audited
+            # as a timeout rather than as a cancellation; this is only the backstop for
+            # a handler that enforces none, and it is deliberately slower.
+            with anyio.fail_after(self.cfg.request_timeout_s * HANDLER_BACKSTOP):
+                result = await self._run_watching_for_disconnect(env, receive)
+        finally:
+            self._slots.release()
 
         # The ONE unwrap on the response path (RESP-005).
         #
@@ -113,7 +157,8 @@ class Edge:
         # a body with no `id` as PROTO_JSONRPC_INVALID, so nothing that would produce
         # an empty response can reach here. Pyright found the branch was unreachable
         # under the handler's own return type — dead code that read as a feature.
-        await _send(send, 200, json.dumps(result.unwrap()).encode("utf-8"))
+        with anyio.fail_after(self.cfg.request_timeout_s):
+            await _send(send, 200, json.dumps(result.unwrap()).encode("utf-8"))
 
     async def _run_watching_for_disconnect(
         self, env: RawEnvelope, receive: Receive

@@ -124,22 +124,36 @@ async def route(
 def _gate(req: CanonicalRequest, drv: DerivedAttributes, dec: Decision) -> None:
     """No forwarding without a validated allow for THIS request, describing THIS call.
 
-    `Decision` is a frozen model carrying `request_id`, so ROUTE-001 is a comparison
-    of typed values rather than an audit of every caller: there is no overload that
-    accepts a boolean and pyright rejects one being added.
+    `Decision` is a frozen model, so ROUTE-001 is a comparison of typed values rather
+    than an audit of every caller: there is no overload that accepts a boolean and
+    pyright rejects one being added.
+
+    The request id is not the whole binding, and treating it as one was a real hole:
+    a decision produced for `write_file` was accepted for `append_file` on the same id
+    with the same arguments — two different side effects sharing one authorization.
+    A decision answers a specific question, so all three parts of the question are
+    compared. `arg_hash` covers the fourth (which resource), below.
 
     ROUTE-002 is the internal equivalent of the header/body split unit 02 closes at
     the edge. The strongest form is to make divergence unrepresentable — the outbound
-    message is derived from `req` and never separately constructed — and this check
-    stays anyway as the refactor guard `_tech/07` §2 asks for. It re-reads the
-    arguments that are about to be forwarded and hashes them against the path stage 05
-    resolved, so a mutation between policy and forwarding breaks the comparison rather
-    than travelling with the request.
+    message is derived from `req` and `drv` and never separately constructed — and
+    this check stays anyway as the refactor guard `_tech/07` §2 asks for. It re-reads
+    the arguments that are about to be forwarded and hashes them against the path
+    stage 05 resolved, so a mutation between policy and forwarding breaks the
+    comparison rather than travelling with the request.
     """
     if dec.request_id != req.request_id:
         raise RouteDenial(
             ReasonCode.ROUTE_NO_DECISION,
             detail=f"decision belongs to {dec.request_id}, not {req.request_id}",
+        )
+    if (dec.method, dec.tool_name) != (req.method, req.tool_name):
+        raise RouteDenial(
+            ReasonCode.ROUTE_NO_DECISION,
+            detail=(
+                f"decision authorised {dec.method}/{dec.tool_name}, "
+                f"request is {req.method}/{req.tool_name}"
+            ),
         )
     if dec.decision != "allow":
         # Defensive: `pipeline.handle` already raised on a deny. Cheap, and it is the
@@ -220,12 +234,20 @@ async def forward(
 ) -> RawResult:
     """Forward iff `dec` is a validated allow for THIS request_id (ROUTE-001).
 
-    ROUTE-004: the CANONICAL request goes upstream, never the client's original bytes.
-    `req.arguments` is what unit 02 parsed, unit 04 validated against the approved
-    schema and unit 05 hashed; `thaw` only converts the frozen structure back to the
-    `dict` the SDK requires, at the boundary, and the result is never stored.
+    ROUTE-004: the CANONICAL request goes upstream, never the client's original bytes,
+    **and that includes the path**. `_outbound` substitutes the path unit 05 resolved
+    for the string the client supplied. Forwarding the client's string was an
+    authorization bypass, not the documented TOCTOU window: `%77orkspace/f.txt` is
+    percent-decoded, resolved and authorized as `workspace/f.txt`, then handed to an
+    upstream that joins it onto its own base literally — so the gateway approved one
+    file and the server acted on a different one, deterministically, with no race to
+    lose and an audit record naming the file nothing touched.
 
-    ROUTE-009 comes free from that path rather than from a filter: the approved schema
+    The remaining gap is the real TOCTOU one and it is now genuinely narrow: the
+    upstream resolves the canonical path again, against the same base, and a component
+    of it can still be swapped in between (threat model §1.5).
+
+    ROUTE-009 comes free from this path rather than from a filter: the approved schema
     sets `additionalProperties: false`, so an argument the schema does not name never
     reaches this function. A runtime scan for credential-shaped fields here would be
     checking a property the registry has already made unrepresentable.
@@ -236,10 +258,30 @@ async def forward(
             ReasonCode.ROUTE_NO_DECISION, detail=f"{req.method} names no tool"
         )
     ob = _enforce(dec, cfg)
-    arguments = cast("JsonObject", thaw(req.arguments))
-    call = upstream.call_tool(req.tool_name, arguments)
+    call = upstream.call_tool(req.tool_name, _outbound(req, drv))
     result, elapsed_ns = await _bounded(call, ob)
     return _measure(_content(result), _is_error(result), elapsed_ns, ob)
+
+
+def _outbound(req: CanonicalRequest, drv: DerivedAttributes) -> JsonObject:
+    """The arguments as authorized: the resolved path, everything else untouched.
+
+    `thaw` converts the frozen structure back to the `dict` the SDK requires, at the
+    boundary, and the result is never stored (`types.thaw`).
+
+    Unit 05 supplies both which argument named the resource and what it resolved to,
+    because the router must not learn the tool vocabulary and has no filesystem access
+    to resolve anything itself (ROUTE-003). An empty `path_argument` means the request
+    named no resource — `tools/list` — and nothing is substituted.
+
+    This does NOT invalidate the ROUTE-002 hash: `_gate` hashes what the client sent
+    against the path stage 05 resolved, which is the pair policy saw. Hashing the
+    rewritten arguments instead would compare the router's own output to itself.
+    """
+    arguments = cast("JsonObject", thaw(req.arguments))
+    if drv.path_argument:
+        arguments[drv.path_argument] = drv.relative_path
+    return arguments
 
 
 # ===========================================================================

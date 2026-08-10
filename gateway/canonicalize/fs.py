@@ -337,6 +337,25 @@ def _resolve(text: str, res: _Resolved) -> tuple[Path, Path]:
     return Path(os.path.realpath(candidate)), Path(os.path.normpath(candidate))
 
 
+def _relative_to_base(real: Path, res: _Resolved) -> str:
+    """The resolved path in the vocabulary the upstream reads: relative to `base`.
+
+    A root outside `base` is denied rather than forwarded. The gateway would have no
+    way to name such a path to the upstream — it joins what it receives onto its own
+    base — so forwarding anything at all would be a guess, and the one thing this
+    module never does is repair input (CANON-002). Every shipped root is inside the
+    base; a configuration where one is not is a deployment error, and this is the
+    request that discovers it.
+    """
+    try:
+        return real.relative_to(res.base).as_posix()
+    except ValueError as e:
+        raise _deny(
+            ReasonCode.CANON_RESOLUTION_FAILED,
+            f"{real} is inside an approved root that lies outside {res.base}",
+        ) from e
+
+
 def _require_existence(real: Path, operation: Operation) -> bool:
     """CANON-009, and the create-vs-overwrite input for CANON-012.
 
@@ -401,6 +420,12 @@ def derive(
     canonical = real.as_posix()
     return DerivedAttributes(
         canonical_path=canonical,
+        # ROUTE-004's half of the bargain. Unit 07 forwards THIS, not the client's
+        # string, and it cannot compute it: the base is unit 05's business and the
+        # router has no filesystem access to resolve against it. See the field's own
+        # docstring for why sending the original string is a bypass and not a race.
+        relative_path=_relative_to_base(real, res),
+        path_argument=_PATH_ARG,
         root=root.name,
         operation=_operation(tgt.operation, exists),
         classification=root.classification,

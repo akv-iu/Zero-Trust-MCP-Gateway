@@ -145,6 +145,12 @@ A unit is **done** when its failure paths are proved, not when its happy path ru
 
 **Unit 07 is built and is not done.** Its tests were skipped at the author's instruction and are owed before it flips to **done**: spec-07 tests 1–11, the `/unit-review` gate, and one assertion that does not belong to unit 07 at all — that the pinned SDK still sends `notifications/cancelled` when a caller cancels. That behaviour was verified by running the installed SDK, and the whole cancellation design now rests on it, so it belongs beside `tests/unit/test_sdk_pin.py` as an upgrade tripwire.
 
+A review of the first cut found three defects, all fixed and all now carrying a named regression test in the owed set. Two were authorization bypasses that the missing tests are precisely what would have caught, which is the argument against shipping a unit this way:
+
+1. **The authorized path was not the forwarded path.** `%77orkspace/f.txt` resolved and authorized as `workspace/f.txt`, then went upstream still encoded — ROUTE-004 violated, and not the documented TOCTOU window but a deterministic divergence. Unit 05 now derives `relative_path` and unit 07 substitutes it.
+2. **A decision was bound only to the request id.** A `write_file` decision was accepted for `append_file` with matching arguments. `Decision` now carries `method` and `tool_name` and the router compares both.
+3. **The record disagreed with the response on a timeout.** The edge's deadline reached the pipeline as an anonymous anyio cancellation, so the audit said `cancelled` while the client was told `ROUTE_TIMEOUT`. The request deadline moved into `pipeline.handle`; the edge keeps a deliberately slower backstop.
+
 Order rationale: the fixture and the oracle come **first** so that "the gateway blocked it" is verified against observed filesystem state from day one, never against a denial message. The audit log comes before any enforcement so that no enforcement stage is ever written without its evidence path.
 
 ---
