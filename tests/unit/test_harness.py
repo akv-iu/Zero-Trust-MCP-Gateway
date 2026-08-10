@@ -197,7 +197,7 @@ def test_direct_mode_requires_explicit_opt_in(monkeypatch: pytest.MonkeyPatch) -
 def test_upstream_error_is_not_a_denial(sandbox: Path) -> None:
     """A tool that fails is not a tool that was blocked. Conflating them would let
     a broken fixture masquerade as a working gateway."""
-    out = DirectClient().call("read_file", {"path": "nope.txt"})
+    out = DirectClient().call(_sc(tool="read_file", arguments={"path": "nope.txt"}))
     assert out.decision == "allow"
     assert out.error and "FileNotFoundError" in out.error
 
@@ -410,15 +410,17 @@ class StubEnforcer:
     def __init__(self, *, containment_enabled: bool = True) -> None:
         self.containment_enabled = containment_enabled
 
-    def call(self, tool: str, arguments: dict) -> CallOutcome:
+    def call(self, scenario: scen.Scenario) -> CallOutcome:
         from fixtures.filesystem_server import tools
 
-        path = arguments.get("path", "")
+        path = scenario.arguments.get("path", "")
         if self.containment_enabled and not path.startswith("public/"):
             return CallOutcome("deny", "CANON_OUTSIDE_ROOT")  # never touches the fixture
         try:
             return CallOutcome(
-                "allow", "POLICY_SCOPED_READ", result=tools.call(tool, arguments)
+                "allow",
+                "POLICY_SCOPED_READ",
+                result=tools.call(scenario.tool, scenario.arguments),
             )
         except Exception as e:  # noqa: BLE001
             return CallOutcome("allow", "POLICY_SCOPED_READ", error=str(e))

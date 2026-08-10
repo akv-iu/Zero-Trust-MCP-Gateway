@@ -29,15 +29,19 @@ precisely the point. The attacker is not using a conforming client, and a corpus
 can only send what a well-behaved library permits cannot express the attack it exists
 to test. So the bytes are written by hand.
 
-Still outstanding and tracked, not hidden: the allow path, and the side-effect oracle
-confirming the fixture observed nothing. Both land with unit 11's ProtectedClient.
+`post_raw` now lives in `harness/wire.py`, because `ProtectedClient` sends the same
+requests and production harness code cannot import from the test suite. This file
+keeps the assertions; the sender is shared, so the corpus and these tests can never
+drift into disagreeing about what was put on the socket.
+
+The `normalized` rows are scored HERE and nowhere else — `runner.run_corpus` skips
+them, because after RFC-conformant OWS stripping the arriving request is legitimate
+and its side effect is an ordinary permitted read the corpus row does not describe.
 """
 
 from __future__ import annotations
 
 import json
-import socket
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -51,7 +55,7 @@ from gateway.errors import GatewayDenial, ReasonCode, Stage, wire_shape
 from gateway.protocol import validate
 from gateway.types import RawEnvelope, Untrusted
 from harness.scenario import load
-from harness.wire import build_envelope
+from harness.wire import Response, build_envelope, free_port, post_raw
 
 pytestmark = [pytest.mark.anyio, pytest.mark.slow]
 
@@ -66,81 +70,10 @@ def malicious_protocol_rows() -> list[Any]:
     ]
 
 
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 async def _wait_ready(server: object, timeout: float = 20.0) -> None:
     with anyio.fail_after(timeout):
         while not getattr(server, "started", False):
             await anyio.sleep(0.05)
-
-
-@dataclass(frozen=True)
-class Response:
-    status: int
-    body: bytes
-
-    def json(self) -> Any:
-        return json.loads(self.body) if self.body else None
-
-
-async def post_raw(
-    port: int, path: str, body: bytes, header_pairs: list[tuple[str, str]]
-) -> Response:
-    """Write an HTTP/1.1 request by hand and read the whole response.
-
-    No client library, because every client library exists to stop you sending
-    exactly these requests. `Connection: close` means the response ends at EOF, so no
-    chunked/keep-alive framing has to be reimplemented here.
-
-    Header values are latin-1 encoded to match RFC 9110's octet model — that is how a
-    CR or a high byte reaches the server rather than raising in the encoder.
-    """
-    lines = [f"POST {path} HTTP/1.1", f"Host: 127.0.0.1:{port}"]
-    lines += [f"{k}: {v}" for k, v in header_pairs]
-    lines += [
-        "Content-Type: application/json",
-        f"Content-Length: {len(body)}",
-        "Connection: close",
-    ]
-    request = ("\r\n".join(lines) + "\r\n\r\n").encode("latin-1") + body
-
-    async with await anyio.connect_tcp("127.0.0.1", port) as stream:
-        await stream.send(request)
-        chunks: list[bytes] = []
-        try:
-            while chunk := await stream.receive(65536):
-                chunks.append(chunk)
-        except anyio.EndOfStream:
-            pass
-
-    raw = b"".join(chunks)
-    head, _, payload = raw.partition(b"\r\n\r\n")
-    status = int(head.split(b"\r\n", 1)[0].split(b" ")[1])
-    if b"transfer-encoding: chunked" in head.lower():
-        payload = _dechunk(payload)
-    return Response(status=status, body=payload)
-
-
-def _dechunk(payload: bytes) -> bytes:
-    """The gateway sets no Content-Length, so uvicorn frames replies as chunked.
-
-    A client library would hide this. Writing the request by hand means owning the
-    response framing too — 10 lines, versus giving up the ability to send the
-    malformed requests that are the entire point of this file.
-    """
-    out = bytearray()
-    while payload:
-        size_line, _, rest = payload.partition(b"\r\n")
-        size = int(size_line.split(b";")[0], 16)
-        if size == 0:
-            break
-        out += rest[:size]
-        payload = rest[size + 2 :]  # skip the chunk's trailing CRLF
-    return bytes(out)
 
 
 async def test_the_corpus_denies_over_real_http_with_the_specified_wire_shape(

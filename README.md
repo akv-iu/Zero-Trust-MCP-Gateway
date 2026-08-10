@@ -21,12 +21,31 @@ router), 08 (response guard). **The pipeline completes end to end** — a reques
 in one end and a tool result comes out the other, against a real policy engine and a
 real child server. Build order and state: [PLAN.md §4.2](PLAN.md).
 
-Two things to read before that sounds finished. **Unit 07's own acceptance tests are
-still owed** — they were skipped at the author's instruction, and a review then found
-two authorization bypasses that those tests would have caught (both fixed; see
-[PLAN.md §4.2](PLAN.md)). And **no corpus row is scored `protected` yet**: the
-measured security rate this project exists to publish needs unit 11's protected
-client, so every number in the corpus today is still the undefended "before".
+**The corpus now scores in `protected` mode.** Every row goes over a real HTTP socket
+into a real gateway, against a real policy engine and a real child server, and each
+verdict is decided by the side-effect oracle reading the fixture's own operation log —
+not by the gateway's answer. Against corpus version 0.1.0, 66 scenarios:
+
+| Mode | Prohibited side effects observed | Legitimate rows passing |
+|---|---|---|
+| `direct` — no gateway | 12 | 9/9 |
+| broken enforcer — negative control | 37 | 9/9 |
+| `protected` — the system under test | **0** | **9/9** |
+
+63 PASS, 3 SKIPPED (two need symlinks, unavailable on Windows; one is normalized by a
+conforming HTTP transport into a legitimate request and is scored in
+`tests/integration/test_protocol_over_http.py` instead). Every scored row is also
+joined to its own audit event; a decision that cannot be correlated to a record is
+reported `INDETERMINATE` and never as a pass.
+
+Read that with its scope attached, and with what is still owed. The corpus is **66
+rows against a target of 100+**, so these are early numbers on a corpus that has not
+finished growing; the families still missing are listed in
+[SPEC-11 §7](_specs/11-svc-eval-harness.md). There is no overhead measurement yet, no
+generated-case counts, and no report generator. And **unit 07's own acceptance tests
+are still owed** — they were skipped at the author's instruction, and a review then
+found two authorization bypasses that those tests would have caught (both fixed; see
+[PLAN.md §4.2](PLAN.md)).
 
 The client edge is **Streamable HTTP on loopback**; only the upstream leg to the
 child server is stdio ([ADR-001](_specs/ADR-001-transport-and-mirrored-metadata.md)).
@@ -69,9 +88,11 @@ The full analysis is in [docs/threat-model.md](docs/threat-model.md).
 ## Running it
 
 ```bash
-python -m pytest tests/ -q            # full suite; no network, no API key
-python -m scripts.damage_demo         # what an unprotected client can do
-python -m scripts.run_corpus          # score the corpus, direct mode
+python -m pytest tests/ -q                    # full suite; no network, no API key
+python -m scripts.damage_demo                 # what an unprotected client can do
+python -m scripts.run_corpus                  # score the corpus, direct mode
+python -m scripts.run_corpus --mode protected # score it through the gateway (needs OPA)
+python -m scripts.run_corpus --break-enforcer # negative control: is the harness blind?
 ruff check . && ruff format --check .
 pyright gateway harness scripts
 ```
