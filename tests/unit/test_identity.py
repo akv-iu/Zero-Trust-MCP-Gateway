@@ -25,6 +25,7 @@ from gateway import config as cfgmod
 from gateway import identity
 from gateway.config import IdentityConfig
 from gateway.types import AuthzContext, CanonicalRequest
+from scripts.check_claims import violations
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -550,30 +551,20 @@ def test_the_bypass_limitation_is_documented_verbatim(doc: str) -> None:
 
 
 def test_no_report_claims_zero_authorization_bypasses() -> None:
-    """A standing project rule, checked here because this is the unit whose
+    """A standing project rule, asserted here because this is the unit whose
     limitation makes the phrase indefensible: §1.1 above means the gateway cannot
     see a second route, so it can never have counted every bypass. The scoped claim
     is `PLAN.md` §6.2.
 
-    The governance docs are allowed to NAME the banned phrase — CLAUDE.md states the
-    prohibition and PLAN.md §6.2 records what replaced it. What they may not do is
-    assert it, so there the phrase must sit in a negated sentence. Anywhere else it
-    is banned outright.
+    The rule itself now lives in `scripts.check_claims`, called rather than copied.
+    Two reasons. `_tech/11` §232 asks for a CI check, and a rule enforced only inside
+    pytest stops being enforced the moment the suite is skipped. And the version here
+    scanned top-level markdown plus `docs/` — so `_specs/`, `_tech/` and `.claude/`
+    could each have asserted the claim without failing anything, which is most of the
+    prose in the repository.
     """
-    banned = "zero authorization bypasses"
-    negations = ("never", "not ", "avoid", "replac", "instead of")
-
-    for path in (*REPO.glob("*.md"), *REPO.glob("docs/*.md")):
-        if path.name == "Zero_Trust_MCP_Gateway_Final.md":
-            continue  # archival original, never edited (PLAN.md §7 holds corrections)
-
-        for line in path.read_text("utf-8").lower().splitlines():
-            if banned not in line:
-                continue
-            governance = path.name in ("CLAUDE.md", "PLAN.md")
-            assert governance and any(n in line for n in negations), (
-                f"{path.name} states the banned claim: {line.strip()[:100]}"
-            )
+    found = violations()
+    assert not found, "\n".join(found)
 
 
 # ===========================================================================

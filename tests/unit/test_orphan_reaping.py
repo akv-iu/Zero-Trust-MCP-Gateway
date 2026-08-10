@@ -36,22 +36,47 @@ REPO = Path(__file__).resolve().parents[2]
 HELPER = REPO / "tests" / "helpers" / "orphan_parent.py"
 
 
+class PidCheckUnavailable(RuntimeError):
+    """This host will not answer whether a pid exists.
+
+    Distinct from "the process is gone", and the distinction is the whole point.
+    `tasklist` can return `Access denied` — under a restricted token, or against a
+    process in another session — and its output then contains no pid, which the
+    previous version read as "the child is dead". That inverts the test: a machine
+    that refuses to answer scored as BRIDGE-009 being satisfied when the child had
+    actually reached READY and was still running.
+
+    An unanswerable check is reported as a skip, never as a product failure and never
+    as a pass.
+    """
+
+
 def pid_alive(pid: int) -> bool:
-    if os.name == "nt":
-        out = subprocess.run(
-            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-            capture_output=True,
-            text=True,
-            check=False,
-        ).stdout
-        return str(pid) in out
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            # Alive, owned by someone else. Not "gone".
+            return True
         return True
-    return True
+
+    proc = subprocess.run(
+        ["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    combined = f"{proc.stdout}\n{proc.stderr}".strip()
+    if proc.returncode != 0 or "access denied" in combined.lower():
+        raise PidCheckUnavailable(
+            f"tasklist could not report on pid {pid} "
+            f"(exit {proc.returncode}): {combined[:200] or '<no output>'}"
+        )
+    # `/FO CSV` quotes each field, so a bare substring match cannot be satisfied by a
+    # pid appearing inside an image name, a memory figure, or the "no tasks" banner.
+    return f'"{pid}"' in proc.stdout
 
 
 def wait_for(predicate, timeout: float = 15.0, interval: float = 0.2) -> bool:
@@ -63,7 +88,6 @@ def wait_for(predicate, timeout: float = 15.0, interval: float = 0.2) -> bool:
     return False
 
 
-@pytest.mark.slow
 @pytest.mark.slow
 def test_child_does_not_survive_an_abnormal_gateway_death(tmp_path: Path) -> None:
     build(tmp_path / "fixture")
@@ -79,17 +103,38 @@ def test_child_does_not_survive_an_abnormal_gateway_death(tmp_path: Path) -> Non
         "PYTHONPATH": str(REPO),
     }
 
+    # stderr is CAPTURED, not discarded. When this test fails the only witness to why
+    # is what the helper and the child wrote on their way down; `DEVNULL` threw that
+    # away and left "child never started" with nothing behind it.
     parent = subprocess.Popen(
         [sys.executable, str(HELPER)],
         env=env,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
         text=True,
     )
+
+    def diagnostics() -> str:
+        if parent.poll() is None:
+            return "<parent still running; stderr not yet readable>"
+        _, err = parent.communicate(timeout=5)
+        return (err or "").strip()[-1500:] or "<no stderr>"
+
+    def alive(pid: int) -> bool:
+        """`PidCheckUnavailable` becomes a SKIP, never a failure and never a pass."""
+        try:
+            return pid_alive(pid)
+        except PidCheckUnavailable as e:
+            pytest.skip(f"cannot determine whether pid {pid} exists on this host: {e}")
+
     try:
-        assert wait_for(lambda: pidfile.exists()), "child never started"
+        assert wait_for(lambda: pidfile.exists()), (
+            f"child never started. helper stderr:\n{diagnostics()}"
+        )
         child_pid = int(pidfile.read_text(encoding="utf-8").strip())
-        assert pid_alive(child_pid), "child was not running before the kill"
+        assert alive(child_pid), (
+            f"child was not running before the kill. helper stderr:\n{diagnostics()}"
+        )
 
         # Kill the PARENT ONLY - hard, no cleanup handlers. Do not use taskkill /T
         # or killpg here: those would kill the tree and prove nothing.
@@ -103,13 +148,14 @@ def test_child_does_not_survive_an_abnormal_gateway_death(tmp_path: Path) -> Non
             os.kill(parent.pid, signal.SIGKILL)
         parent.wait(timeout=15)
 
-        reaped = wait_for(lambda: not pid_alive(child_pid), timeout=20.0)
+        reaped = wait_for(lambda: not alive(child_pid), timeout=20.0)
         if not reaped:
             _force_kill(child_pid)
             pytest.fail(
                 f"ORPHAN: child pid {child_pid} outlived an abnormally killed gateway. "
                 "BRIDGE-009 requires OS-level reaping (POSIX process group, or a "
-                "Windows Job Object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)."
+                "Windows Job Object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE).\n"
+                f"helper stderr:\n{diagnostics()}"
             )
     finally:
         if parent.poll() is None:

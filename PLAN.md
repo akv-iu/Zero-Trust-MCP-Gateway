@@ -139,7 +139,7 @@ Ordered so that each step is runnable and testable the day it lands. Nothing is 
 | 10 | `07-svc-upstream-router` | 06, 10 | Only allowed calls reach the fixture; obligations enforced; a validated allow for *this* request id or nothing moves. **REG-010's other half discharged**: `tools/list` is forwarded and then filtered against `data.gateway.discoverable`, which now has a Python caller. **AUDIT-009's write gap closed** by an `upstream_attempt` record fsynced before the call, so an unwritable sink denies before the side effect rather than after (audit schema v2). Two SDK findings changed the design: the byte ceiling is **detection, not prevention**, because `stdio_client` materialises a whole line before the gateway sees a byte ([90 §10g](_specs/90-deferred-register.md)); and `bridge.UpstreamHandle.cancel` is **deleted** because the SDK already sends `notifications/cancelled` with the id it actually put on the wire, while ours could only have sent the client's ([90 §10h](_specs/90-deferred-register.md)). **Spec §9 tests 1–11 all land**, the SDK cancellation tripwire sits beside the pin, and the `/unit-review` gate ran: 14/14 guards break-verified, and the adversarial round's three real defects are fixed with named regression tests | **done** |
 | 11 | `08-svc-response-guard` | 07 | **The end-to-end path is open**, and proved over a real ASGI call as well as through the pipeline. Size, structural limits, shape, MRTR refusal and the untrusted label all enforced; one walk serves both directions (`protocol.StructuralLimits`), pinned to agree with the byte prescan on the depth boundary. The SDK owns correlation and drops a mismatched id **silently**, so `RESP_CORRELATION_MISMATCH` was removed under CONV-010; server-initiated requests reach typed callbacks, so `UpstreamWatch` refuses **and records** them (audit schema v3). **26 unit + 4 integration, 15/15 then 7/7 breaks caught** | **done** |
 | 12 | `11-svc-eval-harness` (full) | all | **118 published hand-written scenarios** over real HTTP and per-principal gateways: 115 PASS / 3 declared skips, 21/21 legitimate, 0 prohibited effects; raw audit and fixture op-log evidence are joined and provenance-bound. Five seeded Hypothesis families produced 2,500/2,500 CI-profile passes, and a real allow-all Rego negative control produced 13 CRITICAL outcomes. The alternating N=1,000 paired benchmark and strict [Markdown report](docs/benchmark-report.md) publish the observed numbers with no latency gate. `/unit-review`: 12/12 guard mutations caught; five adversarial defects fixed; delete pass applied. The 25,000-case release profile hit a two-hour local timeout and is not claimed | **done** |
-| 13 | `12-svc-agent-harness` | v1 exit gate | Groq proposes calls; gateway result is identical to the deterministic client's | |
+| 13 | `12-svc-agent-harness` | v1 exit gate | Groq proposes calls; gateway result is identical to the deterministic client's | **unblocked** — the [exit gate](#status--all-four-hold-measured-2026-08-10) holds |
 
 A unit is **done** when its failure paths are proved, not when its happy path runs. Units 01, 09 and 10 each went through a review round after first being called complete; what those rounds found were, without exception, safety and failure-path defects sitting behind a working happy path. Orphan reaping is the one carried-over item still tracked where it will be fixed rather than here: it depends on the child honouring stdin EOF rather than on OS-level process groups (see `tests/unit/test_orphan_reaping.py`).
 
@@ -174,6 +174,7 @@ Eight weeks, part-time. Each gate is a runnable artifact, not a document.
 ### Week 2 — Transparent bridge + audit
 **Build:** `01`, `09`.
 **Gate:** an MCP client (test driver and MCP Inspector) completes `tools/list` and `tools/call` through the gateway with no policy, and every request produces exactly one JSONL audit event with a stable request ID that correlates to the fixture's observed operation.
+**Met, with one part outstanding.** The test-driver half is proved end to end. **The MCP Inspector check has not been run** — it needs `npx` and a human at a browser, so it cannot be discharged by the suite. It is the only gate item in weeks 1–8 still owed, and it is an interoperability check against a third-party client, not a security control: nothing else in the project depends on it.
 
 ### Weeks 3–4 — The differentiator + default-deny routing
 **Build:** `02`, `03`, `04`.
@@ -199,6 +200,21 @@ Eight weeks, part-time. Each gate is a runnable artifact, not a document.
 4. The security core passes with `GROQ_API_KEY` unset and no network.
 
 Only after all four: start v1.1.
+
+#### Status — all four hold, measured 2026-08-10
+
+| # | Condition | Observed | Where |
+|---|---|---|---|
+| 1 | Malicious denied, no prohibited state change | 115 PASS / 3 declared skips, **0 prohibited effects** | `run_corpus --mode protected --profile full` |
+| 2 | Legitimate rows produce their expected result | **21/21**; false positives reported as a number, not asserted zero | same run |
+| 3 | One audit event per decision, completeness measured | **113/113 (100.00%)** | [benchmark report](docs/benchmark-report.md) |
+| 4 | Passes with `GROQ_API_KEY` unset and no network | 751 passed, 7 skipped; key unset | `pytest tests/` |
+
+Condition 1 is meaningful only because the negative control is: a real allow-all Rego bundle produces 13 detected CRITICAL outcomes, and `direct` produces 23 prohibited effects. A zero from a harness that has never been seen to report non-zero is not evidence.
+
+**Two things are deliberately not claimed.** The 25,000-case `release` generation profile reached a two-hour local timeout without completing, so the published generated result is the 2,500-case `ci` profile and is labelled as such. And the MCP Inspector interoperability check (week 2) is still owed.
+
+Neither blocks the gate: the gate is stated in terms of the published corpus, the audit trail, and the offline suite, and all three are discharged.
 
 ---
 

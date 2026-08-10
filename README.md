@@ -11,6 +11,8 @@ measured completeness ratio.
 
 Scope, milestones and the verification method are in [PLAN.md](PLAN.md). What each
 unit must do is in [`_specs/`](_specs/); how to build it is in [`_tech/`](_tech/).
+Every number below, with the command that produced it and the two that are *not*
+claimed: [docs/reproducing-the-evidence.md](docs/reproducing-the-evidence.md).
 
 ## Status
 
@@ -63,8 +65,8 @@ warmup of each N=1,000 run:
 
 | Run | p50 | p95 | p99 | min | max |
 |---|---:|---:|---:|---:|---:|
-| Single concurrency | 54.457 ms | 75.404 ms | 119.292 ms | 28.037 ms | 160.160 ms |
-| Concurrency 4 | 21.964 ms | 27.375 ms | 31.779 ms | 9.321 ms | 35.890 ms |
+| Single concurrency | 54.347 ms | 84.462 ms | 118.346 ms | 26.077 ms | 137.964 ms |
+| Concurrency 4 | 19.092 ms | 25.486 ms | 28.331 ms | 8.464 ms | 49.418 ms |
 
 These are development measurements, not throughput or capacity claims.
 

@@ -1,0 +1,154 @@
+name: CI
+
+# The gates from `PLAN.md` §4.2 and CLAUDE.md, enforced between commits rather than
+# only when someone remembers to run them.
+#
+# Two things this workflow deliberately does NOT do:
+#
+#   * install the `agent` extra. CONV-016 says the whole v1 suite passes with no model
+#     API key and no network, and the honest way to prove that is for the dependency
+#     not to be here. `pydantic-ai-slim[groq]` is v1.1's, and a step below asserts it
+#     is unimportable — a claim about absence needs a check, or it is just a comment.
+#   * run the full 25,000-case generation profile or the paired benchmark. Both are
+#     evidence runs measured in hours; they belong to a release, not to a push. The
+#     corpus is scored at `--profile full` because it takes about a minute.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # `requires-python = ">=3.12"` is a published claim, so both are tested.
+        # Development is on 3.13; without 3.12 here the floor of that range is
+        # asserted and never exercised.
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install (runtime + dev only, never the agent extra)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest pytest-anyio hypothesis ruff pyright
+
+      - name: CONV-016 — no model dependency, no API key
+        run: |
+          if python -c "import pydantic_ai" 2>/dev/null; then
+            echo "::error::pydantic_ai is importable; the agent extra leaked into CI"
+            exit 1
+          fi
+          if [ -n "${GROQ_API_KEY:-}" ]; then
+            echo "::error::GROQ_API_KEY is set; v1 must pass without it"
+            exit 1
+          fi
+          echo "no model dependency present, no API key set"
+
+      - name: Lint and format
+        run: |
+          python -m ruff check .
+          python -m ruff format --check .
+
+      # Before the blackout: pyright downloads a node bundle on first run.
+      - name: Types
+        run: python -m pyright gateway harness scripts
+
+      - name: Scoped security claim (PLAN.md §6.2)
+        run: python -m scripts.check_claims
+
+      - name: Fetch pinned OPA and verify its checksum
+        run: python -m scripts.fetch_opa
+
+      # ---------------------------------------------------------------------
+      # CONV-016 says the v1 suite passes with no network. Asserting the API key
+      # is unset proves only that one route is closed; until here nothing stopped
+      # a dependency reaching out. Everything that legitimately needs the network
+      # — installs, the pyright bundle, the OPA download — has already happened,
+      # so from this point outbound connections are refused and the suite has to
+      # prove the claim rather than restate it.
+      #
+      # Loopback stays open because the system under test lives there: OPA on
+      # 127.0.0.1:8181, one gateway per principal, the child over stdio.
+      # ESTABLISHED/RELATED stays open so the runner keeps its existing
+      # connection to GitHub and can still report the result.
+      #
+      # NOT verifiable on a development machine — this is the one step in the
+      # workflow whose behaviour is first observed on a real runner.
+      # ---------------------------------------------------------------------
+      - name: Block outbound network
+        run: |
+          sudo iptables -A OUTPUT -o lo -j ACCEPT
+          sudo iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+          sudo iptables -A OUTPUT -j REJECT --reject-with icmp-port-unreachable
+          sudo ip6tables -A OUTPUT -o lo -j ACCEPT || true
+          sudo ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT || true
+          sudo ip6tables -A OUTPUT -j REJECT || true
+
+      - name: Prove the block is real
+        run: |
+          python - <<'PY'
+          import socket, sys
+
+          listener = socket.socket()
+          listener.bind(("127.0.0.1", 0))
+          listener.listen(1)
+          socket.create_connection(listener.getsockname(), timeout=5).close()
+          listener.close()
+          print("loopback reachable — the system under test can still run")
+
+          for host, port in (("1.1.1.1", 443), ("8.8.8.8", 53)):
+              try:
+                  socket.create_connection((host, port), timeout=5).close()
+              except OSError as exc:
+                  print(f"egress to {host}:{port} refused ({exc.__class__.__name__})")
+                  continue
+              print(f"::error::connected to {host}:{port}; CONV-016 is not enforced")
+              sys.exit(1)
+          PY
+
+      - name: Policy bundle — its own tests, no Python involved
+        run: |
+          .tools/opa test policies/
+          python -m scripts.sync_policy_revision --check
+
+      - name: Reason codes are in sync with the Rego mirror
+        run: |
+          python -m scripts.sync_reason_codes
+          git diff --exit-code policies/reason_codes.json
+
+      - name: Test suite
+        run: python -m pytest tests/ -q
+
+      # Only after the suite: a green suite with a red corpus would mean the
+      # evidence chain broke while its unit tests kept passing, which is the one
+      # failure this project cannot afford to discover late.
+      - name: Corpus — protected, every row
+        run: python -m scripts.run_corpus --mode protected --profile full
+
+      - name: Corpus — negative control must still detect a broken enforcer
+        run: python -m scripts.run_corpus --break-enforcer --profile full
+
+      - name: Restore network
+        if: always()
+        run: |
+          sudo iptables -F OUTPUT || true
+          sudo ip6tables -F OUTPUT || true
