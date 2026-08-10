@@ -39,7 +39,7 @@ def load_all(config_path: str | Path) -> tuple[Config, registry.Registry]:
     a child — which is what `--check`-style tooling and most tests actually want.
     """
     cfg = load_config(config_path)
-    cfg.self_check()
+    cfg.self_check(config_path)
     # `registry_path` resolves against the working directory, exactly like
     # `audit.path` and `canonicalize.roots[].path`. Resolving it against the config
     # FILE's location instead would be a second convention for the same kind of

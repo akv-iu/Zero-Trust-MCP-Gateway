@@ -50,6 +50,9 @@ async def handle(env: RawEnvelope, deps: Deps) -> Untrusted[JsonObject]:
         builder.set(**registry.audit_fields(tgt))
         with builder.stage(Stage.CANONICAL):
             drv = canonicalize.derive(req, tgt, deps.config.canonicalize)
+        # Overwrites stage 04's `operation` with the create/overwrite split, which is
+        # what policy is about to evaluate. See `canonicalize.fs.audit_fields`.
+        builder.set(**canonicalize.audit_fields(drv))
         with builder.stage(Stage.POLICY):
             dec = await policy.evaluate(req, ctx, tgt, drv, deps.opa, deps.config.policy)
         if dec.decision != "allow":

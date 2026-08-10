@@ -127,7 +127,22 @@ class IdentityConfig(BaseModel):
 
 
 class RootConfig(BaseModel):
-    """05 — one approved filesystem root and its per-operation permissions."""
+    """05 — one approved filesystem root and its per-operation permissions.
+
+    A root is an area the gateway is willing to *name*. A resolved path inside no
+    root cannot be canonicalized at all and is denied at stage 05; a resolved path
+    inside a root is canonicalized, classified, and handed to policy — which is what
+    then applies the flags below. Unit 05 does not enforce them, deliberately: an
+    operation refused because the ROOT forbids it and one refused because the
+    PRINCIPAL may not perform it are the same sentence to a reader of the audit log,
+    and only one of them is a policy decision. The flags are policy input, published
+    to OPA as data by unit 06.
+
+    So a directory holding data nobody may touch is still listed here — with every
+    flag false. Leaving it out instead would collapse "you asked for something
+    outside the world I know about" and "you asked for confidential data" into one
+    reason code, and the second is the interesting one.
+    """
 
     model_config = _FROZEN
 
@@ -141,17 +156,54 @@ class RootConfig(BaseModel):
     rename: bool = False
     delete: bool = False
 
+    @model_validator(mode="after")
+    def _named(self) -> RootConfig:
+        # `DerivedAttributes.root` uses "" for a request that names no resource
+        # (`tools/list`). An empty root name would make that sentinel ambiguous.
+        if not self.name or not self.classification:
+            raise ValueError("every root needs a non-empty name and classification")
+        return self
+
 
 class CanonicalizeConfig(BaseModel):
     """05."""
 
     model_config = _FROZEN
 
+    base: str = "var/fixture"
+    """The directory a client-supplied relative path is resolved against.
+
+    **This MUST equal the base the upstream server uses**, or the gateway
+    canonicalizes one file and the upstream opens another — it would authorize
+    resource A and cause a side effect on resource B, with an audit record naming A.
+    That is the worst failure this unit can have, and it is silent.
+
+    For the v1 fixture the upstream is `fixtures/filesystem_server`, which resolves
+    `root / path` with `root = $FIXTURE_ROOT` (default `var/fixture`). Held by
+    `test_shipped_config.py::test_the_canonicalize_base_matches_the_fixture_root`,
+    which lives there rather than here because the gateway must not know fixture
+    internals — it is a property of the shipped PAIR of configurations.
+
+    Distinct from a root: the base is where paths are interpreted, the roots are
+    where they are allowed to land. Making the base a root would approve the whole
+    tree.
+    """
     roots: tuple[RootConfig, ...]
     max_path_length: int = 4_096
-    max_resolution_depth: int = 40
     sensitive_decoys: tuple[str, ...] = ()
+    """Paths relative to `base`, denied outright (CANON-014). A file matches, and so
+    does anything under a listed directory."""
     decode_rule_version: Literal["v1"] = "v1"
+    """Which decode rule this configuration was written against.
+
+    `canonicalize.fs` refuses to start if it implements a different one, the same
+    control as `hashing.FINGERPRINT_VERSION` — where a rule changed while the version
+    string did not, and only the golden test caught it. `max_resolution_depth` used
+    to sit here and is gone: symlink depth is enforced by the OS (`ELOOP`) and
+    surfaced as `CANON_RESOLUTION_FAILED`, and a gateway-side counter would require
+    the hand-rolled component walk `_tech/05` §10 forbids. A limit nothing enforces
+    fails CONV-015 more loudly than a missing one.
+    """
 
 
 class PolicyConfig(BaseModel):
@@ -233,11 +285,16 @@ class Config(BaseModel):
             raise ValueError("response.max_bytes must be >= router.max_response_bytes")
         return self
 
-    def self_check(self) -> None:
+    def self_check(self, config_path: str | Path | None = None) -> None:
         """CANON-015: gateway-owned paths must lie outside every approved root.
 
         Called at startup, before readiness. Uses the same segment-aware comparison
         as the request path, so a containment bug shows up here too.
+
+        `config_path` is passed in because a `Config` does not know where it came
+        from, and CANON-015 names the gateway's own configuration first. Optional so
+        the check still runs against a synthesised config; `startup.load_all` always
+        supplies it.
         """
         roots = [Path(r.path).resolve() for r in self.canonicalize.roots]
         # The child's cwd used to be listed here. It comes from the registry now
@@ -248,6 +305,8 @@ class Config(BaseModel):
             Path(self.registry_path),
             Path(self.audit.path),
         ]
+        if config_path is not None:
+            protected.append(Path(config_path))
         for p in protected:
             rp = p.resolve()
             for root in roots:

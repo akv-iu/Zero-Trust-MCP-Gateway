@@ -83,6 +83,12 @@ v1 tests canonicalization correctness exhaustively and **does not claim TOCTOU s
 
 **CANON-009** — Resolution failure of any kind — nonexistent intermediate component where resolution requires one, permission error, loop in symlinks, exceeded resolution depth — MUST be a denial (`CONV-004`), never a fallback to the unresolved string.
 
+**CANON-016** — A path whose *syntax* names something other than an unambiguous file MUST be refused before the filesystem is consulted: device namespaces and UNC shares, a `:` in any component (a drive letter or an alternate data stream), reserved device names (`CON`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`, with or without an extension), and a component ending in a dot or a space. The refusal MUST be unconditional rather than platform-conditional: a rule that fires only on Windows makes the same corpus row mean two different things on two machines, and every one of these can only ever deny more.
+
+**CANON-017** — Containment (`CANON-007`) MUST be evaluated **before** existence (`CANON-009`). A path outside every approved root MUST report the boundary it crossed whether or not its target happens to exist. Ordering them the other way turns the reason code into an existence oracle across the security boundary and makes a published corpus row's expected reason depend on what is installed on the host.
+
+**CANON-018** — Client-supplied relative paths MUST be resolved against the same base the upstream server uses. Where the two differ, the gateway canonicalizes one resource and the upstream acts on another: an allow whose audit record names a resource that was never touched, and a side effect nobody authorized. Nothing at runtime can detect this, so it MUST be asserted where both configurations are visible.
+
 ### 6.2 Derived attributes
 
 **CANON-010 (`REQ-GUARD-002`)** — Policy MUST receive `canonical_path` and derived attributes. The raw supplied string MUST NOT be part of the policy input.
@@ -107,19 +113,26 @@ v1 tests canonicalization correctness exhaustively and **does not claim TOCTOU s
 |---|---|
 | Malformed encoding / still-encoded after one pass | `CANON_ENCODING_INVALID` |
 | Null byte or control character | `CANON_NULL_BYTE` |
+| Device namespace, UNC, ADS, reserved device name, trailing dot or space, over-length (`CANON-016`) | `CANON_PATH_REJECTED` |
 | Resolved path outside every approved root | `CANON_OUTSIDE_ROOT` |
 | Symlink resolves outside an approved root | `CANON_SYMLINK_ESCAPE` |
 | Symlink loop or resolution depth exceeded | `CANON_RESOLUTION_FAILED` |
-| Resolution error (permission, unreadable component) | `CANON_RESOLUTION_FAILED` |
+| Resolution error (permission, unreadable component, target absent where the operation requires one) | `CANON_RESOLUTION_FAILED` |
 | Path is a sensitive decoy location | `CANON_SENSITIVE_PATH` |
-| Operation class not derivable from the tool | `CANON_OPERATION_UNKNOWN` |
 | Gateway config inside an approved root | startup fails |
+| `decode_rule_version` naming a rule the build does not implement | config refuses to load (single-member `Literal`) |
+
+`CANON_OPERATION_UNKNOWN` was in this table and is **removed**. The operation class arrives on `ResolvedTarget.operation`, a required member of a closed literal the registry loader has already validated, and unit 05 handles every member — a tool whose operation is missing or misspelled fails startup as a `ConfigError`. No request reaches the code, and `CONV-010` says a code no scenario can produce is removed rather than documented. Its revival trigger is in `gateway/errors.py`: an approved tool whose operation must be derived from *arguments* rather than from the registry.
 
 ---
 
 ## 8. Configuration surface
 
-Approved roots with per-root read/create/overwrite/append/rename/delete permissions; decode rule version; max resolution depth; sensitive-decoy path list; classification map from fixture layout.
+`base` — the directory client-supplied relative paths are resolved against (`CANON-018`); approved roots with per-root read/create/overwrite/append/rename/delete permissions; decode rule version; maximum path length; sensitive-decoy path list.
+
+A root is an area the gateway is willing to **name**; the per-operation flags say what may be done there and are **policy input**, not checks unit 05 performs. Classification is the containing root's, which is what makes it derive from layout under version control (`CANON-013`) — there is no separate classification map, and a directory holding data nobody may touch is still a root, with every flag false. Leaving such a directory out of the roots instead would give "you asked for confidential data" and "you named a directory that does not exist" one reason code, and only the first is a finding.
+
+`max_resolution_depth` was here and is **removed**: symlink depth is enforced by the operating system (`ELOOP`) and surfaced as `CANON_RESOLUTION_FAILED`, and a gateway-side counter would require the hand-rolled component walk §10 forbids. A configured limit nothing enforces fails `CONV-015` more loudly than a missing one.
 
 ---
 
@@ -145,6 +158,12 @@ The attack class here is the corpus's largest and the one reviewers recognize in
 16. Every denial is confirmed by the oracle: the fixture observed no read, no write, no stat of the escaped target.
 17. Startup fails when an approved root would contain the gateway's config or audit output.
 18. Hypothesis generates path and encoding variants from a recorded seed; every generated case resolves inside a root or is denied — never resolves outside a root and is allowed.
+19. Every syntax `CANON-016` names is refused, on every platform.
+20. A **golden vector set per decode-rule version** pins what `CANON-001`'s rule *does*, so changing `decode_once` without bumping the version fails; and `canonicalize.base` is asserted equal to the upstream's resolution base (`CANON-018`).
+
+All twenty live in `tests/unit/test_canonicalize.py`, except 20's base assertion, which is in `tests/unit/test_shipped_config.py` — it is a property of the shipped *pair* of configurations, and putting it in the gateway's own tests would mean teaching `gateway/` the fixture's environment variable.
+
+Tests 6, 7 and 8 need symlinks. Where the platform refuses to create them they are reported **SKIPPED** and never counted as passes (`FIX-003`); test 15's in-root link and the `CANON_RESOLUTION_FAILED` row are duplicated in symlink-free form so neither claim rests entirely on a platform that may skip.
 
 ---
 

@@ -486,16 +486,27 @@ def test_every_destructive_scenario_targets_a_file_that_exists() -> None:
     Deliberately narrow: it applies only to tools that need an EXISTING file, and
     only to paths carrying no traversal or encoding material. Every traversal row
     names something outside the tree on purpose, and `write_file` creates its target.
+
+    Rows whose expected reason is a REFUSAL TO CANONICALIZE are exempt too. A path
+    the gateway will not resolve — `CANON_RESOLUTION_FAILED` says so directly, and
+    `CANON_PATH_REJECTED` refuses the syntax before the filesystem is consulted — is
+    not claiming to damage anything, so requiring its target to exist would be asking
+    the corpus to prove the opposite of what the row says.
     """
     from fixtures.manifest import TREE
 
     needs_a_real_file = {"read_file", "stat_file", "delete_file", "append_file"}
-    deliberately_absent = ("..", "%2", "\x00", "\r", "\n", "traps/")
+    # Any percent-encoding, not just `%2`: `%00` is encoding material too, and the
+    # narrower marker let fs-traversal-011 be flagged for not existing on disk when
+    # a path the fixture cannot decode is precisely what that row sends.
+    deliberately_absent = ("..", "%", "\x00", "\r", "\n", "traps/")
+    not_a_damage_claim = {"CANON_RESOLUTION_FAILED", "CANON_PATH_REJECTED"}
 
     missing = [
         (s.id, s.tool, path)
         for s in scen.load().scenarios
         if s.tool in needs_a_real_file
+        and s.expected_reason not in not_a_damage_claim
         and (path := s.arguments.get("path")) is not None
         and not any(marker in path for marker in deliberately_absent)
         and path.replace("\\", "/").split("/")[0] in {p.split("/")[0] for p in TREE}

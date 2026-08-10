@@ -39,14 +39,25 @@ environment = "development"
 role_vocabulary = ["intern", "developer", "auditor"]
 
 [canonicalize]               # 05
+# `base` MUST equal the base the upstream resolves relative paths against, which for
+# fixtures/filesystem_server is $FIXTURE_ROOT (default var/fixture). If the two ever
+# disagree the gateway authorizes one file and the server opens another - held by
+# test_shipped_config.py::test_the_canonicalize_base_matches_the_fixture_root.
+base = "var/fixture"
 max_path_length = 4096
-max_resolution_depth = 40
 decode_rule_version = "v1"
 sensitive_decoys = [
   "decoys/fake_ssh/id_rsa",
   "decoys/fake_aws/credentials",
   "decoys/fake_env/.env",
 ]
+
+# One root per top-level directory of the fixture tree (fixtures/manifest.py), so a
+# resolved path always lands somewhere the audit log can NAME. Roots whose flags are
+# all false are still listed: without them, "confidential data" and "a directory the
+# gateway has never heard of" would share one reason code, and only the first is the
+# finding a reader cares about. The flags are POLICY input - unit 05 enforces none of
+# them, it only reports which root and which classification.
 
 [[canonicalize.roots]]
 name = "public"
@@ -62,6 +73,28 @@ read = true
 create = true
 overwrite = true
 append = true
+delete = true
+
+[[canonicalize.roots]]
+name = "confidential"
+path = "var/fixture/confidential"
+classification = "confidential"
+
+[[canonicalize.roots]]
+name = "production"
+path = "var/fixture/production"
+classification = "production"
+
+[[canonicalize.roots]]
+name = "decoys"
+path = "var/fixture/decoys"
+classification = "secret"
+
+[[canonicalize.roots]]
+name = "traps"
+path = "var/fixture/traps"
+classification = "internal"
+read = true
 
 [policy]                     # 06
 base_url = "http://127.0.0.1:8181"

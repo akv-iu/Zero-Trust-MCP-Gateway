@@ -15,9 +15,10 @@ unit must do is in [`_specs/`](_specs/); how to build it is in [`_tech/`](_tech/
 ## Status
 
 Units built: foundation, 10 (fixture), 11 (harness skeleton), 09 (audit), 01 (HTTP
-edge + stdio upstream bridge), 02 (protocol guard), 03 (identity). Remaining units
-are stubs that raise `NotImplementedError` naming their owner. Build order and
-state: [PLAN.md §4.2](PLAN.md).
+edge + stdio upstream bridge), 02 (protocol guard), 03 (identity), 04 (registry),
+05 (filesystem canonicalizer). Remaining units are stubs that raise
+`NotImplementedError` naming their owner — a request reaching one is denied, never
+passed. Build order and state: [PLAN.md §4.2](PLAN.md).
 
 The client edge is **Streamable HTTP on loopback**; only the upstream leg to the
 child server is stdio ([ADR-001](_specs/ADR-001-transport-and-mirrored-metadata.md)).
@@ -44,8 +45,16 @@ Two further limits worth stating before anyone reads the numbers:
   performs authorization, not authentication. v1's position is that every local
   process is one trust domain; distinct principals must not be co-hosted outside a
   test harness ([threat model §1.2](docs/threat-model.md)).
+- **Path canonicalization is defense in depth, not a race-free guarantee.** The
+  primary filesystem control is the sandbox mount. The gateway resolves a path,
+  policy authorizes the resolved path, and then the *client's original string* is
+  forwarded — the upstream resolves it again, itself. That window cannot be closed
+  from here. v1 tests canonicalization correctness exhaustively and does **not**
+  claim TOCTOU safety ([threat model §1.5](docs/threat-model.md)).
 - **The benchmark is co-located.** Client, gateway, policy engine and server run on
   one machine. The overhead figure is real and the caveat travels with it.
+- **Symlink tests skip on Windows** without Developer Mode, and skips are reported as
+  skips — never counted as passes. Read the skip list before the pass count.
 
 The full analysis is in [docs/threat-model.md](docs/threat-model.md).
 

@@ -83,6 +83,50 @@ path, then unit 07 forwards. Between resolution and use, another process can rep
 a component of that path. The gateway narrows the window; it does not close it. See
 [PLAN.md §7.4](../PLAN.md) for how this was reframed after the first review.
 
+The window is wider than "another process could win a race", and the honest version is
+worth stating: **unit 07 forwards the argument the client sent, not the path unit 05
+resolved.** The upstream resolves it again, itself, against its own base. Two
+consequences follow.
+
+*The gateway and the upstream must agree on that base.* `canonicalize.base` is the
+directory the gateway resolves relative paths against; `$FIXTURE_ROOT` is the one the
+fixture uses. If they diverge, the gateway authorizes one file and the server opens
+another — an allow whose audit record names a resource nothing touched. Nothing at
+runtime can notice, because both halves are internally consistent, so it is asserted
+where both configurations are visible
+(`test_shipped_config.py::test_the_canonicalize_base_matches_the_fixture_root`).
+
+*`exists` is a snapshot.* The create-versus-overwrite distinction is read from the
+filesystem at stage 05 and can be stale by stage 07. It cannot upgrade a privilege:
+policy treats overwrite as at least as sensitive as create, so losing that race can only
+produce a stricter evaluation than the truth.
+
+### 1.6 The decode rule, stated so it can be argued with
+
+Unit 05 applies exactly one decoding pass, under this rule — `decode_rule_version = "v1"`
+in `config/gateway.toml`, and `IMPLEMENTED_DECODE_RULE` in
+`gateway/canonicalize/fs.py`, with a golden vector set pinning what v1 *does* so the
+behaviour cannot change without the version changing:
+
+> A supplied path is percent-decoded exactly once using UTF-8. After that single pass,
+> any remaining `%` followed by two hex digits causes rejection. No other decoding is
+> applied — no unicode-escape, no HTML entity, no backslash escape.
+
+Decoding twice is a vulnerability and decoding zero times is a vulnerability, so the
+number has to be written down rather than left to whatever the implementation happens to
+do. The residual-encoding rejection is what defeats double encoding without ever
+decoding twice: `%252e%252e%252f` decodes once to `%2e%2e%2f`, still matches, and is
+denied.
+
+Two accepted false positives follow, and both are published rather than fixed:
+
+- a path legitimately containing a literal `%41` is denied;
+- a path legitimately containing a literal `\` is denied on POSIX, because `\` is
+  translated to `/` on every platform so that a separator variant cannot canonicalize
+  differently from its equivalent.
+
+Neither exists in the fixture. Both can only ever deny more.
+
 ---
 
 ## 2. What it does defend
@@ -102,14 +146,20 @@ owner, so a request reaching one is denied as `INTERNAL_ERROR` rather than passe
 | Oversized request, bad origin, removed HTTP methods | Unit 01 edge | `test_edge.py`; rejections leave no trace at the fixture |
 | A dead or misbehaving child process | Unit 01 bridge | `crash`, `malformed`, `wrong_id`, `unsolicited` modes; denial at the call site |
 | Identity overstated in the record | Unit 03 single-member `Literal`s | Suite-wide invariant over every record the test session emits |
+| An unregistered, disabled or drifted tool | Unit 04 registry, fingerprints compared at handshake | Drift and the poisoned annotation against the **live** fixture in `FIXTURE_MODE=drift` / `=poison`, through real startup |
+| Path traversal, encoding tricks, device-name and separator aliases | Unit 05 canonicalization before policy | `test_canonicalize.py` against a real tree; Hypothesis over an adversarial segment alphabet; `harness/scenarios/fs_traversal.toml` |
+| Reading a synthetic sensitive location | Unit 05 decoy list, ahead of policy | Every decoy × every tool; the check is on the **resolved** path, so spelling does not evade it |
 | Evidence loss under cancellation | Unit 09 shielded write | Passes only with the production shield present |
+
+Unit 05's symlink rows (spec tests 6–8) need a platform that will create symlinks.
+Where it will not — Windows without Developer Mode, which is this developer's machine —
+they are reported **SKIPPED** and never counted as passes. Read the skip list before
+reading the pass count.
 
 ### 2.2 Specified, not yet built
 
 | Threat | Planned control | State |
 |---|---|---|
-| An unregistered or drifted tool | Unit 04 fingerprinting | stub |
-| Path traversal, encoding tricks, symlink escape | Unit 05 canonicalization before policy | stub |
 | Reading data the principal may not read | Unit 06 default-deny Rego | stub; OPA not yet required to run the suite |
 | An allowed call exceeding its obligations | Unit 07 router | stub |
 | An oversized or uncorrelated upstream response | Unit 08 response guard | stub |

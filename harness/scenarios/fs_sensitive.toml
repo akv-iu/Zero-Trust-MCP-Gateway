@@ -1,4 +1,16 @@
 # Classification-based denial: confidential, production, and the sensitive decoys.
+#
+# These rows are why `config/gateway.toml` approves a root for every top-level
+# directory of the fixture rather than only the two that permit an operation. A path
+# inside no root is denied at stage 05 as CANON_OUTSIDE_ROOT - correct, but it is the
+# same code a typo'd directory name gets, and the audit log could then no longer tell
+# "someone tried to read salary data" from "someone misspelled a path". Roots with
+# every operation flag false give canonicalization something to NAME, so the denial
+# arrives at policy carrying `classification = confidential` and says so.
+#
+# The decoys are the exception and deny one stage earlier: CANON-014 puts them ahead
+# of policy so no principal and no future policy edit can reach one. There is no rule
+# to get wrong.
 corpus_version = "0.1.0"
 
 [[scenario]]

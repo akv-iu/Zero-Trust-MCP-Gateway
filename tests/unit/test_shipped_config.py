@@ -104,7 +104,65 @@ def test_shipped_config_binds_loopback_only() -> None:
 
 def test_gateway_owned_paths_lie_outside_every_approved_root() -> None:
     """CANON-015 self-check, run against the shipped file rather than a synthetic one."""
-    cfgmod.load(REPO / "config" / "gateway.toml").self_check()
+    path = REPO / "config" / "gateway.toml"
+    cfgmod.load(path).self_check(path)
+
+
+def test_the_canonicalize_base_matches_the_fixture_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The silent failure unit 05 cannot detect from inside.
+
+    `canonicalize.base` is the directory the GATEWAY resolves a client's relative
+    path against; `fixtures/filesystem_server/tools.py` resolves `root / path` with
+    `root = $FIXTURE_ROOT`. If the two disagree, canonicalization authorizes one file
+    and the upstream opens another — an allow whose audit record names a resource
+    that was never touched, and a side effect nobody authorized. Nothing at runtime
+    can notice: both halves look internally consistent.
+
+    Asserted HERE rather than in the gateway because it is a property of the shipped
+    PAIR of configurations. Teaching `gateway/` the fixture's environment variable
+    would put fixture knowledge in the code under test, which is the coupling
+    `fixtures/` must never import from `gateway/` exists to prevent.
+    """
+    from fixtures.filesystem_server import tools
+
+    # Read the fixture's own default out of the fixture rather than repeating the
+    # string here — a literal copied into this file would keep agreeing with itself
+    # after the fixture changed, which is the failure the test is for. `FIXTURE_ROOT`
+    # is cleared because a deployment overrides BOTH sides together; what has to
+    # match is the pair as shipped.
+    monkeypatch.delenv("FIXTURE_ROOT", raising=False)
+    cfg = cfgmod.load(REPO / "config" / "gateway.toml")
+    assert Path(cfg.canonicalize.base) == tools._root(), (  # noqa: SLF001
+        f"canonicalize.base is {cfg.canonicalize.base!r} but the fixture resolves "
+        f"paths against {str(tools._root())!r}"  # noqa: SLF001
+    )
+
+
+def test_every_approved_root_lies_under_the_canonicalize_base() -> None:
+    """A root the base cannot reach is dead configuration; one it reaches only by
+    climbing out with `..` is a root nobody meant to approve."""
+    cfg = cfgmod.load(REPO / "config" / "gateway.toml")
+    base = Path(cfg.canonicalize.base).resolve()
+    for root in cfg.canonicalize.roots:
+        assert Path(root.path).resolve().is_relative_to(base), (
+            f"root {root.name!r} at {root.path!r} is not under {cfg.canonicalize.base!r}"
+        )
+
+
+def test_every_sensitive_decoy_is_a_path_the_fixture_actually_ships() -> None:
+    """CANON-014's list is only as good as its spelling. A typo'd decoy path silently
+    protects nothing, and the code cannot tell the difference — the entry simply never
+    matches. `fixtures/manifest.py` is the source both sides have to agree with."""
+    from fixtures.manifest import TREE
+
+    cfg = cfgmod.load(REPO / "config" / "gateway.toml")
+    assert cfg.canonicalize.sensitive_decoys, "the decoy list is empty"
+    unknown = [d for d in cfg.canonicalize.sensitive_decoys if d not in TREE]
+    assert unknown == [], (
+        f"sensitive_decoys names paths the fixture does not build: {unknown}"
+    )
 
 
 def test_no_secret_shaped_env_var_is_set_during_tests() -> None:

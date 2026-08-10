@@ -1033,9 +1033,10 @@ async def test_the_pipeline_actually_persists_the_stage_04_fields(
     green. Unit 03 had exactly this in its identity fields; this is the same test one
     stage later.
 
-    Stage 05 is a stub, so the request dies immediately after stage 04 — which is the
-    point: the `finally` writes the event regardless, so anything stage 04 set must
-    already be on it.
+    The request dies after stage 04 either way — stage 05 denies against a fixture
+    tree this test never builds, or stage 06's stub raises — which is the point: the
+    `finally` writes the event regardless, so anything stage 04 set must already be
+    on it.
     """
     import json as _json
 

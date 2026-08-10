@@ -103,11 +103,25 @@ class ReasonCode(StrEnum):
     # -- 05 canonicalizer --------------------------------------------------
     CANON_ENCODING_INVALID = "CANON_ENCODING_INVALID"
     CANON_NULL_BYTE = "CANON_NULL_BYTE"
+    CANON_PATH_REJECTED = "CANON_PATH_REJECTED"
     CANON_OUTSIDE_ROOT = "CANON_OUTSIDE_ROOT"
     CANON_SYMLINK_ESCAPE = "CANON_SYMLINK_ESCAPE"
     CANON_RESOLUTION_FAILED = "CANON_RESOLUTION_FAILED"
     CANON_SENSITIVE_PATH = "CANON_SENSITIVE_PATH"
-    CANON_OPERATION_UNKNOWN = "CANON_OPERATION_UNKNOWN"
+    #
+    # CANON_OPERATION_UNKNOWN was here and is GONE, for the reason
+    # REG_SERVER_UNKNOWN and IDENT_CONTEXT_UNAVAILABLE went. The spec's failure table
+    # gave it to "operation class not derivable from the tool", but the operation
+    # class arrives on `ResolvedTarget.operation`, which is a required member of a
+    # closed `Operation` literal that the registry loader has already validated — a
+    # tool whose operation is missing or misspelled fails startup as a ConfigError,
+    # and unit 05 handles every member. There is no request that reaches it.
+    # CONV-010: a code no scenario can produce is removed, not documented.
+    #
+    # Revive it with its raise path in the same change if an approved tool's
+    # operation ever has to be derived from ARGUMENTS rather than from the registry
+    # — an `open(path, mode=...)` style tool, where the same name is a read or a
+    # write depending on what the client sends.
 
     # -- 06 policy: deny side ----------------------------------------------
     POLICY_UNAVAILABLE = "POLICY_UNAVAILABLE"

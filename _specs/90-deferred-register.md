@@ -202,6 +202,43 @@ them explicit paths is unit 11's, where real startup is assembled.
 
 ---
 
+## 10e. Canonicalizer surface removed when unit 05 landed
+
+**`CANON_OPERATION_UNKNOWN`** — removed, not deferred, for the reason that removed
+`IDENT_CONTEXT_UNAVAILABLE`, `REG_SERVER_UNKNOWN` and `REG_HEADER_ANNOTATION_INVALID`.
+The spec's failure table gave it to "operation class not derivable from the tool", but
+the class arrives on `ResolvedTarget.operation` — a required member of a closed
+`Operation` literal the registry loader has already validated — and unit 05 handles
+every member. A tool with a missing or misspelled operation fails startup as a
+`ConfigError`. No request can reach the code, and `CONV-010` says a code no scenario can
+produce is removed rather than documented.
+
+*Revival trigger:* an approved tool whose operation must be derived from **arguments**
+rather than from the registry — an `open(path, mode=...)` shape, where one name is a
+read or a write depending on what the client sends. The raise path lands in the same
+change.
+
+**`canonicalize.max_resolution_depth`** — removed. Symlink depth is enforced by the
+operating system (`ELOOP`) and surfaced as `CANON_RESOLUTION_FAILED`. Counting hops in
+the gateway would mean walking components by hand, which `_tech/05` §10 forbids because
+that walk is where traversal bugs live. `CONV-015` asks every configured limit to have a
+documented default and boundary tests; a limit nothing enforces fails that harder than a
+limit that is absent.
+
+*Revival trigger:* a platform whose `realpath` is found not to raise on a loop, or a
+requirement to deny *before* the OS gives up.
+
+**The case-sensitivity probe** (`_tech/05` §5) — never built. Containment compares a
+resolved path to a resolved root and `realpath` returns the true on-disk spelling, so
+`CANON-005` is satisfied without one; a probe would also have meant the gateway writing
+a file into the protected tree at startup, which the oracle would then have to be taught
+to ignore. Reasoning in `_tech/05` §5.
+
+*Revival trigger:* a comparison that has to happen on an unresolved path — for instance
+a deny rule matched against a name that does not exist yet.
+
+---
+
 ## 11. Kept in v1 despite being cuttable
 
 Recorded so they are not cut in a later round of enthusiasm:

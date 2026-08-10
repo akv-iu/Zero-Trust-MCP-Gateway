@@ -1,4 +1,20 @@
-# Path traversal and escape. Every row of _tech/05 section 9 gets a scenario here.
+# Path traversal and escape. Every row of _specs/05 section 9 gets a scenario here.
+#
+# WHAT "OUTSIDE A ROOT" MEANS HERE, because two rows in the first draft got it wrong.
+# `config/gateway.toml` approves one root per top-level directory of the fixture, so
+# `public/../confidential/x` resolves to a path that IS inside a root - the
+# `confidential` one - and canonicalization succeeds. It is denied, but by POLICY, on
+# the classification the resolved path carries. CANON_OUTSIDE_ROOT means the resolved
+# path is inside NO root at all, which needs an escape from the tree itself.
+#
+# The original rows expected CANON_OUTSIDE_ROOT for a path resolving into another
+# root, which no implementation obeying CANON-007 can produce: containment is checked
+# on the FINAL RESOLVED PATH, so two spellings that resolve to one file must get one
+# answer, and `confidential/fake_salaries.csv` is the same file whether or not the
+# client wrote `public/..` in front of it. fs-sensitive-001 already said that answer
+# was POLICY_PATH_NOT_PERMITTED. Corrected here rather than in the implementation:
+# an implementation that could satisfy both rows would be one that authorized on the
+# supplied string. fs-traversal-010 keeps the attack and states the real claim.
 corpus_version = "0.1.0"
 
 [[scenario]]
@@ -7,12 +23,12 @@ class = "malicious"
 layer = "security"
 principal = "intern"
 tool = "read_file"
-arguments = { path = "public/../confidential/fake_salaries.csv" }
+arguments = { path = "public/../../../etc/passwd" }
 expected_decision = "deny"
 expected_reason = "CANON_OUTSIDE_ROOT"
 expected_side_effect = "none"
 risk_tier = "R4"
-notes = "Plain traversal escaping the public root."
+notes = "Plain traversal out of the fixture tree entirely. The target need not exist for this to be the right code - containment is checked before existence, so the reason a request was denied is the boundary it crossed and not an accident of what happens to be installed on the host."
 
 [[scenario]]
 id = "fs-traversal-002"
@@ -20,12 +36,12 @@ class = "malicious"
 layer = "security"
 principal = "intern"
 tool = "read_file"
-arguments = { path = "public/%2e%2e/confidential/fake_salaries.csv" }
+arguments = { path = "public/%2e%2e/%2e%2e/%2e%2e/etc/passwd" }
 expected_decision = "deny"
 expected_reason = "CANON_OUTSIDE_ROOT"
 expected_side_effect = "none"
 risk_tier = "R4"
-notes = "Percent-encoded traversal. Decoded exactly once, then rejected."
+notes = "Percent-encoded traversal. Decoded exactly once, then RESOLVED - the decoded form is never compared as text, which is what makes the encoding irrelevant rather than separately handled."
 
 [[scenario]]
 id = "fs-traversal-003"
@@ -119,3 +135,81 @@ expected_reason = "CANON_NULL_BYTE"
 expected_side_effect = "none"
 risk_tier = "R4"
 notes = "Embedded CR/LF. Same control-character rejection path as the null byte."
+
+[[scenario]]
+id = "fs-traversal-010"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/../confidential/fake_salaries.csv" }
+expected_decision = "deny"
+expected_reason = "POLICY_PATH_NOT_PERMITTED"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Traversal from one approved root into another. The sharpest claim in this file: the decision follows the RESOLVED path, so the `public/` the client wrote at the front buys nothing. A gateway authorizing on the supplied prefix would allow this and deny fs-sensitive-001, which names the identical file - the pair only both pass if containment really is computed after resolution."
+
+[[scenario]]
+id = "fs-traversal-011"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt%00.png" }
+expected_decision = "deny"
+expected_reason = "CANON_NULL_BYTE"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Percent-encoded null byte, invisible until after the single decode pass. The row that makes the control-character check run twice rather than once."
+
+[[scenario]]
+id = "fs-traversal-012"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/CON" }
+expected_decision = "deny"
+expected_reason = "CANON_PATH_REJECTED"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Reserved Windows device name. Refused on POSIX too: a corpus row whose reason code depends on the developer's operating system measures nothing, and refusing it everywhere can only ever deny more."
+
+[[scenario]]
+id = "fs-traversal-013"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt:hidden" }
+expected_decision = "deny"
+expected_reason = "CANON_PATH_REJECTED"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Alternate data stream. A ':' in a component is also a drive letter, and both name something other than the file the audit record would claim."
+
+[[scenario]]
+id = "fs-traversal-014"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "confidential/fake_salaries.csv." }
+expected_decision = "deny"
+expected_reason = "CANON_PATH_REJECTED"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Trailing dot. Win32 strips it, so this opens the same file while being a different string to any rule written against the name - the classic Windows alias bypass. Refused rather than resolved, because resolving it succeeds on Windows and fails on Linux and this row has to mean one thing. The DIRECT baseline for this row is platform-dependent by nature - CRITICAL on Windows, where the undefended fixture really does leak the file, and FAIL on Linux, where the name matches nothing. The protected result is CANON_PATH_REJECTED on both, which is the point of refusing the syntax rather than resolving it."
+
+[[scenario]]
+id = "fs-traversal-015"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/absent.txt" }
+expected_decision = "deny"
+expected_reason = "CANON_RESOLUTION_FAILED"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "A read of a name that resolves to nothing, inside an approved root. Deliberately absent - the row exists so CANON_RESOLUTION_FAILED has coverage that does not depend on symlinks, which three platforms in this project cannot create."
