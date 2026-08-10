@@ -1,0 +1,68 @@
+# Approved JSON Schema boundaries.  Values are deliberately JSON-typed; the scenario
+# model must not coerce them to strings before the registry validates them.
+corpus_version = "0.1.0"
+
+[[scenario]]
+id = "reg-args-missing-path"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = {}
+expected_decision = "deny"
+expected_reason = "REG_ARGS_INVALID"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "read_file requires path; the upstream never receives a request with a guessed default."
+
+[[scenario]]
+id = "reg-args-path-number"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = 7 }
+expected_decision = "deny"
+expected_reason = "REG_ARGS_INVALID"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "A numeric path is rejected by the approved schema rather than string-coerced."
+
+[[scenario]]
+id = "reg-args-list-path-number"
+class = "malicious"
+layer = "security"
+principal = "developer"
+tool = "list_directory"
+arguments = { path = -1 }
+expected_decision = "deny"
+expected_reason = "REG_ARGS_INVALID"
+expected_side_effect = "none"
+risk_tier = "R0"
+notes = "Optional does not mean untyped: list_directory path, when present, is a string."
+
+[[scenario]]
+id = "reg-args-content-number"
+class = "malicious"
+layer = "security"
+principal = "developer"
+tool = "write_file"
+arguments = { path = "workspace/notes.txt", content = 0 }
+expected_decision = "deny"
+expected_reason = "REG_ARGS_INVALID"
+expected_side_effect = "none"
+risk_tier = "R2"
+notes = "Write content is not coerced across the JSON number/string boundary."
+
+[[scenario]]
+id = "reg-args-delete-unknown"
+class = "malicious"
+layer = "security"
+principal = "developer"
+tool = "delete_file"
+arguments = { path = "workspace/notes.txt", recursive = true }
+expected_decision = "deny"
+expected_reason = "REG_ARGS_UNKNOWN_FIELD"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "A plausible destructive extension is still outside the closed approved schema."

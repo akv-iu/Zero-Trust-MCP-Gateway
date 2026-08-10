@@ -273,8 +273,15 @@ the trigger is a policy change big enough that landing it blind is the risk.
 ## 10g. The response byte ceiling is detection, not prevention
 
 **Deferred:** a streaming abort on `max_response_bytes` (ROUTE-006).
-**Shipped instead:** the response is measured once it is materialised, and an oversized
-one is denied with `ROUTE_RESPONSE_TOO_LARGE`.
+**Shipped instead:** the response is measured once it is materialised by unit 07, and
+an oversized one is denied by **unit 08** with `RESP_TOO_LARGE`.
+
+`ROUTE_RESPONSE_TOO_LARGE` was the original name and no longer exists. Unit 07 compared
+the identical number against the identical limit one stage before unit 08 did, which
+made `RESP_TOO_LARGE` unreachable in production while its unit test constructed a
+`RawResult` the router could never return — two checks of one quantity at one moment
+are not two layers. The earlier one was removed (unit 08 review, `PLAN.md` §4.2); unit
+07 measures and audits `response_bytes`, and the ceiling lives in unit 08 alone.
 
 `_tech/07` §5 asks the count to happen at the transport layer so the reader aborts
 mid-stream, and pre-authorises this fallback on condition it be stated rather than

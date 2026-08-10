@@ -43,6 +43,7 @@ def test_shipped_child_module_is_importable() -> None:
     assert spec is not None, f"{args[1]} is not importable"
 
 
+@pytest.mark.slow
 async def test_shipped_config_actually_starts_the_child(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

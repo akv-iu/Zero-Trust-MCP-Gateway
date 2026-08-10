@@ -14,12 +14,14 @@ only the oracle can catch it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
 from harness.clients import TRANSPORT_REJECTED, CallOutcome, Client
 from harness.oracle import Observation, Oracle
+from harness.provenance import source_fingerprint
 from harness.scenario import ExpectedEffect, Scenario
 
 
@@ -40,6 +42,12 @@ class ScenarioResult:
     detail: str
     claimed_decision: str | None = None
     observed_ops: tuple[str, ...] = ()
+    observed_evidence: tuple[str, ...] = ()
+    tree_changed: bool = False
+    incomplete_ops: tuple[str, ...] = ()
+    reason_code: str | None = None
+    request_id: str | None = None
+    audit_expected: bool = False
 
     @property
     def is_lying_gateway(self) -> bool:
@@ -57,9 +65,31 @@ def score(
     scenario: Scenario, outcome: CallOutcome, obs: Observation, mode: str
 ) -> ScenarioResult:
     ops = tuple(f"{e.op}:{e.requested}" for e in obs.effects)
+    evidence = tuple(
+        f"{e.pid}:{e.seq}" for e in obs.effects if e.pid is not None and e.seq is not None
+    )
+    incomplete = tuple(f"{e.op}:{e.requested}" for e in obs.attempted_only)
 
     def made(verdict: Verdict, detail: str) -> ScenarioResult:
-        return ScenarioResult(scenario.id, mode, verdict, detail, outcome.decision, ops)
+        audit = outcome.audit
+        return ScenarioResult(
+            scenario_id=scenario.id,
+            mode=mode,
+            verdict=verdict,
+            detail=detail,
+            claimed_decision=outcome.decision,
+            observed_ops=ops,
+            observed_evidence=evidence,
+            tree_changed=obs.state_changed,
+            incomplete_ops=incomplete,
+            reason_code=outcome.reason_code,
+            request_id=audit.request_id if audit else None,
+            audit_expected=mode == "protected"
+            and not (
+                scenario.transport is not None
+                and scenario.transport.http_fate == "rejected"
+            ),
+        )
 
     if scenario.expected_side_effect == "none":
         # Checked FIRST and unconditionally. A prohibited effect outranks every other
@@ -111,7 +141,27 @@ def score(
             )
         return made(Verdict.PASS, "denied, no side effect observed")
 
-    # allow scenario: the effect must be observed to have HAPPENED
+    # A declared effect must be observed to have HAPPENED.  This includes response
+    # attacks: the upstream read can legitimately complete before unit 08 rejects its
+    # malformed response, so "deny" does not imply "no expected effect".
+    expected = scenario.expected_side_effect
+    matches = tuple(effect for effect in obs.effects if _effect_matches(effect, expected))
+    unexpected_state = obs.state_changed and (
+        not obs.effects or expected.op in {"read", "list", "stat"}
+    )
+    unexpected_effect = bool(obs.effects) and (len(obs.effects) != 1 or len(matches) != 1)
+    if unexpected_effect or unexpected_state:
+        what = ops or ("state changed with no logged operation",)
+        return made(
+            Verdict.CRITICAL,
+            f"observed effects differ from the one declared effect: {list(what)}",
+        )
+    if obs.attempted_only:
+        return made(
+            Verdict.INDETERMINATE,
+            f"additional operation attempt did not complete: {list(incomplete)}",
+        )
+
     unjoined = _audit_problem(scenario, outcome)
     if unjoined is not None:
         # HARN-009 is not conditional on the verdict being a denial. An allow with no
@@ -119,14 +169,23 @@ def score(
         # is the completeness hole AUDIT-004 exists to measure rather than assume.
         return made(*unjoined)
     if outcome.decision != scenario.expected_decision:
-        return made(Verdict.FAIL, f"expected allow, got {outcome.decision}")
+        return made(
+            Verdict.FAIL,
+            f"expected {scenario.expected_decision}, got {outcome.decision}",
+        )
+    if mode != "direct" and outcome.reason_code != scenario.expected_reason:
+        return made(
+            Verdict.FAIL,
+            f"expected reason {scenario.expected_reason}, got {outcome.reason_code}",
+        )
     if not _matches(obs, scenario.expected_side_effect):
         return made(
             Verdict.FALSE_SUCCESS,
             f"expected {scenario.expected_side_effect.op} touching "
             f"{scenario.expected_side_effect.path_contains!r}; observed {list(ops)}",
         )
-    return made(Verdict.PASS, "allowed, expected effect observed")
+    action = "allowed" if outcome.decision == "allow" else "denied after upstream effect"
+    return made(Verdict.PASS, f"{action}, expected effect observed")
 
 
 def _audit_problem(
@@ -186,10 +245,14 @@ def _audit_problem(
 
 
 def _matches(obs: Observation, expected: ExpectedEffect) -> bool:
-    return any(
-        e.op == expected.op and expected.path_contains in (e.requested + " " + e.resolved)
-        for e in obs.effects
-    )
+    return any(_effect_matches(effect, expected) for effect in obs.effects)
+
+
+def _effect_matches(effect: object, expected: ExpectedEffect) -> bool:
+    op = getattr(effect, "op", None)
+    requested = str(getattr(effect, "requested", ""))
+    resolved = str(getattr(effect, "resolved", ""))
+    return op == expected.op and expected.path_contains in f"{requested} {resolved}"
 
 
 # -- aggregate reporting ---------------------------------------------------
@@ -199,6 +262,16 @@ def _matches(obs: Observation, expected: ExpectedEffect) -> bool:
 class CorpusReport:
     mode: str
     results: tuple[ScenarioResult, ...]
+    source_fingerprint: str = field(default_factory=source_fingerprint)
+    profile: str = "full"
+    """Which slice of the corpus produced this. `full` or `smoke`.
+
+    Written into the artifact so `harness.report` can refuse a subset. A smoke run is
+    a development signal and its numbers are true of the 50 rows it scored — the harm
+    is not in producing them, it is in a later reader mistaking them for the corpus
+    result. The profile travels with the numbers so that mistake cannot be made
+    silently.
+    """
 
     def count(self, v: Verdict) -> int:
         return sum(1 for r in self.results if r.verdict is v)
@@ -215,7 +288,21 @@ class CorpusReport:
     def summary(self) -> str:
         counted = [v for v in Verdict if self.count(v)]
         parts = ", ".join(f"{self.count(v)} {v.value}" for v in counted)
-        return f"[{self.mode}] {len(self.results)} scenarios: {parts}"
+        subset = "" if self.profile == "full" else f" ({self.profile} subset)"
+        return f"[{self.mode}{subset}] {len(self.results)} scenarios: {parts}"
+
+    def write(self, path: Path, *, corpus_version: str) -> None:
+        """Persist the scored oracle observations consumed by ``harness.report``."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "artifact_version": 1,
+            "source_fingerprint": self.source_fingerprint,
+            "corpus_version": corpus_version,
+            "mode": self.mode,
+            "profile": self.profile,
+            "results": [asdict(result) for result in self.results],
+        }
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def run_corpus(
@@ -225,6 +312,7 @@ def run_corpus(
     *,
     reset_between: bool = True,
     root: Path | None = None,
+    profile: str = "full",
 ) -> CorpusReport:
     """FIX-009: the tree is reset and VERIFIED between scenarios, not assumed."""
     from fixtures.build_tree import links_available, reset, tree_hash
@@ -237,6 +325,31 @@ def run_corpus(
         if s.requires_symlinks and not links_available(fixture_root):
             results.append(
                 ScenarioResult(s.id, client.mode, Verdict.SKIPPED, "symlinks unavailable")
+            )
+            continue
+        if (
+            (s.fixture_mode or s.gateway_fault is not None)
+            and client.mode == "direct"
+            and s.kind == "malicious"
+        ):
+            results.append(
+                ScenarioResult(
+                    s.id,
+                    client.mode,
+                    Verdict.SKIPPED,
+                    "scenario requires a configured protected deployment variant",
+                )
+            )
+            continue
+        supports = getattr(client, "supports", None)
+        if callable(supports) and not supports(s):
+            results.append(
+                ScenarioResult(
+                    s.id,
+                    client.mode,
+                    Verdict.SKIPPED,
+                    f"deployment variant not started: {s.deployment_key}",
+                )
             )
             continue
         if s.transport is not None and client.mode == "direct":
@@ -286,4 +399,4 @@ def run_corpus(
             if after != baseline:
                 raise RuntimeError(f"fixture reset did not restore state after {s.id}")
 
-    return CorpusReport(mode=client.mode, results=tuple(results))
+    return CorpusReport(mode=client.mode, results=tuple(results), profile=profile)

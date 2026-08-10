@@ -46,7 +46,6 @@ from gateway.errors import ProtocolDenial, ReasonCode, ResponseDenial
 from gateway.types import (
     CanonicalRequest,
     JsonObject,
-    Obligations,
     RawResult,
     Untrusted,
 )
@@ -62,7 +61,7 @@ _REQUIRED_LIST_KEY: Final[dict[str, str]] = {
 
 
 def validate(
-    raw: RawResult, req: CanonicalRequest, ob: Obligations, cfg: ResponseConfig
+    raw: RawResult, req: CanonicalRequest, cfg: ResponseConfig
 ) -> Untrusted[JsonObject]:
     """Accept, bound, label. MUST NOT mutate accepted content (RESP-008).
 
@@ -79,7 +78,7 @@ def validate(
     break that correspondence (`_tech/08` §4).
     """
     doc = _envelope(raw)
-    _bound(raw, ob, cfg)
+    _bound(raw, cfg)
     _shape(doc, req)
     _limits(doc, cfg)
     # RESP-001, and it is what the client actually needs: a JSON-RPC RESPONSE, not the
@@ -112,18 +111,22 @@ def _envelope(raw: RawResult) -> JsonObject:
     return dict(cast("Mapping[str, Any]", content))
 
 
-def _bound(raw: RawResult, ob: Obligations, cfg: ResponseConfig) -> None:
+def _bound(raw: RawResult, cfg: ResponseConfig) -> None:
     """RESP-003. Two ceilings, and the lower one wins.
 
-    `ob.max_response_bytes` is what policy authorised for THIS request; `cfg.max_bytes`
-    is what the gateway will carry for any request. Unit 07 already compared against
-    the obligation, and this comparison is deliberately not "the same check twice":
-    unit 07 bounds what the transport delivered, this bounds what survived parsing,
-    and only the second catches a payload that expands after framing (`_tech/08` §3).
+    `raw.obligations` is what unit 07 ACTUALLY enforced — the decision's obligation
+    already clamped to `RouterConfig` — and `cfg.max_bytes` is what the gateway will
+    carry for any request.
 
-    Both are cheap. Redundancy between two layers that fail differently is the point.
+    It is read off the result rather than taken as a parameter, and that is a fix
+    rather than a tidy-up. `pipeline.handle` used to pass `dec.obligations`, which is
+    what policy ASKED for: a decision above the router's ceiling was clamped and
+    audited as clamped, then measured here against the unclamped number, so an
+    oversized response was accepted under a record claiming the lower limit had been
+    enforced (Codex review). Two comparisons of one quantity are only two layers if
+    they compare the same number.
     """
-    ceiling = min(ob.max_response_bytes, cfg.max_bytes)
+    ceiling = min(raw.obligations.max_response_bytes, cfg.max_bytes)
     if raw.byte_count > ceiling:
         raise _deny(ReasonCode.RESP_TOO_LARGE, f"{raw.byte_count} bytes over {ceiling}")
 

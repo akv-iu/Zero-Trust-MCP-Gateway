@@ -64,6 +64,7 @@ def wait_for(predicate, timeout: float = 15.0, interval: float = 0.2) -> bool:
 
 
 @pytest.mark.slow
+@pytest.mark.slow
 def test_child_does_not_survive_an_abnormal_gateway_death(tmp_path: Path) -> None:
     build(tmp_path / "fixture")
     pidfile = tmp_path / "child.pid"

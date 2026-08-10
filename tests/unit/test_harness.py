@@ -83,7 +83,7 @@ def test_missing_expected_reason_is_rejected() -> None:
         )
 
 
-def test_incoherent_scenarios_are_rejected_at_load() -> None:
+def test_malicious_scenarios_cannot_expect_allow() -> None:
     base = {
         "id": "x",
         "class": "malicious",
@@ -91,18 +91,20 @@ def test_incoherent_scenarios_are_rejected_at_load() -> None:
         "principal": "p",
         "tool": "read_file",
         "arguments": {},
-        "expected_reason": "R",
+        "expected_reason": "CANON_OUTSIDE_ROOT",
         "risk_tier": "R4",
         "notes": "n",
     }
-    with pytest.raises(Exception, match="cannot expect a side effect"):
-        scen.Scenario.model_validate(
-            {
-                **base,
-                "expected_decision": "deny",
-                "expected_side_effect": {"op": "read", "path_contains": "x"},
-            }
-        )
+    response_denial = scen.Scenario.model_validate(
+        {
+            **base,
+            "expected_decision": "deny",
+            "expected_side_effect": {"op": "read", "path_contains": "x"},
+        }
+    )
+    assert response_denial.expected_side_effect != "none", (
+        "response-guard denials happen after the declared upstream operation"
+    )
     with pytest.raises(Exception, match="cannot expect allow"):
         scen.Scenario.model_validate(
             {**base, "expected_decision": "allow", "expected_side_effect": "none"}
@@ -114,6 +116,29 @@ def test_mixed_corpus_versions_are_refused(tmp_path: Path) -> None:
     (tmp_path / "b.toml").write_text('corpus_version = "2.0"\n', encoding="utf-8")
     with pytest.raises(ValueError, match="mixed corpus versions"):
         scen.load(tmp_path)
+
+
+def test_published_corpus_meets_the_unit_11_size_and_mode_floor() -> None:
+    corpus = scen.load()
+    assert len(corpus.scenarios) >= 100
+    assert {scenario.kind for scenario in corpus.scenarios} == {
+        "malicious",
+        "legitimate",
+    }
+    assert {
+        scenario.fixture_mode for scenario in corpus.scenarios if scenario.fixture_mode
+    } == {
+        "oversized",
+        "hang",
+        "crash",
+        "inject",
+        "drift",
+        "poison",
+        "malformed",
+        "wrong_id",
+        "unsolicited",
+        "pathological",
+    }
 
 
 # ===========================================================================
@@ -321,11 +346,70 @@ def test_allow_with_the_expected_effect_passes() -> None:
     )
 
 
+def test_declared_effect_does_not_mask_an_extra_confidential_read() -> None:
+    from harness.oracle import Effect
+
+    scenario = _sc(
+        **{
+            "class": "legitimate",
+            "expected_decision": "allow",
+            "expected_reason": "POLICY_SCOPED_READ",
+            "expected_side_effect": {"op": "read", "path_contains": "public/doc"},
+        }
+    )
+    observation = Observation(
+        ops=(
+            Effect("read", "public/doc.txt", "/abs/public/doc.txt", "ok"),
+            Effect(
+                "read",
+                "confidential/fake_salaries.csv",
+                "/abs/confidential/fake_salaries.csv",
+                "ok",
+            ),
+        ),
+        tree_before="a",
+        tree_after="a",
+    )
+    result = score(
+        scenario,
+        CallOutcome("allow", "POLICY_SCOPED_READ"),
+        observation,
+        "protected",
+    )
+    assert result.verdict is Verdict.CRITICAL
+
+
+def test_read_with_an_unexplained_tree_change_is_critical() -> None:
+    from harness.oracle import Effect
+
+    scenario = _sc(
+        **{
+            "class": "legitimate",
+            "expected_decision": "allow",
+            "expected_reason": "POLICY_SCOPED_READ",
+            "expected_side_effect": {"op": "read", "path_contains": "public/doc"},
+        }
+    )
+    observation = Observation(
+        ops=(Effect("read", "public/doc.txt", "/abs/public/doc.txt", "ok"),),
+        tree_before="a",
+        tree_after="b",
+    )
+    result = score(
+        scenario,
+        CallOutcome("allow", "POLICY_SCOPED_READ"),
+        observation,
+        "protected",
+    )
+    assert result.verdict is Verdict.CRITICAL
+
+
 # ===========================================================================
 # Direct-mode baseline: the unprotected "before" picture
 # ===========================================================================
 
 
+@pytest.mark.slow
 def test_direct_mode_baseline(sandbox: Path, oracle: Oracle) -> None:
     """The unprotected "before" picture, scored. This is the week-1 gate.
 
@@ -378,6 +462,7 @@ def test_direct_mode_legitimate_scenarios_succeed(sandbox: Path, oracle: Oracle)
     ]
 
 
+@pytest.mark.slow
 def test_corpus_run_resets_and_verifies_the_fixture(
     sandbox: Path, oracle: Oracle
 ) -> None:
@@ -414,6 +499,8 @@ class StubEnforcer:
         from fixtures.filesystem_server import tools
 
         path = scenario.arguments.get("path", "")
+        if not isinstance(path, str):
+            return CallOutcome("deny", scenario.expected_reason)
         if self.containment_enabled and not path.startswith("public/"):
             return CallOutcome("deny", "CANON_OUTSIDE_ROOT")  # never touches the fixture
         try:
@@ -432,7 +519,10 @@ def test_harness_reports_clean_against_a_working_enforcer(
     scenarios = tuple(
         s
         for s in scen.load().malicious()
-        if not s.arguments.get("path", "").startswith("public/")
+        if not (
+            isinstance(s.arguments.get("path", ""), str)
+            and s.arguments.get("path", "").startswith("public/")
+        )
     )
     report = run_corpus(scenarios, StubEnforcer(), oracle, root=sandbox)
     assert report.prohibited_effects == 0, [
@@ -440,6 +530,7 @@ def test_harness_reports_clean_against_a_working_enforcer(
     ]
 
 
+@pytest.mark.slow
 def test_harness_DETECTS_a_deliberately_broken_enforcer(
     sandbox: Path, oracle: Oracle
 ) -> None:
@@ -462,6 +553,7 @@ def test_harness_DETECTS_a_deliberately_broken_enforcer(
     assert report.lying_gateway == (), "the stub reported allow, so nothing lied"
 
 
+@pytest.mark.slow
 def test_negative_control_pinpoints_the_leak(sandbox: Path, oracle: Oracle) -> None:
     """Not just 'something broke' — which scenario, and what was touched."""
     report = run_corpus(
@@ -510,6 +602,7 @@ def test_every_destructive_scenario_targets_a_file_that_exists() -> None:
         if s.tool in needs_a_real_file
         and s.expected_reason not in not_a_damage_claim
         and (path := s.arguments.get("path")) is not None
+        and isinstance(path, str)
         and not any(marker in path for marker in deliberately_absent)
         and path.replace("\\", "/").split("/")[0] in {p.split("/")[0] for p in TREE}
         and path not in TREE

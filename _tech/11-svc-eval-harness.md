@@ -210,8 +210,11 @@ Seed handling: `--hypothesis-seed=<n>`, captured from the run and written into t
 ## 6. Report generation
 
 ```bash
-uv run python -m harness.report --audit var/audit.jsonl --oplog var/oplog.jsonl \
-    --corpus harness/scenarios --bench var/bench.json --out docs/benchmark-report.md
+uv run python -m harness.report --audit var/corpus/audit-*.jsonl \
+    --oplog var/corpus/oplog.jsonl --corpus harness/scenarios \
+    --results var/corpus-results.json --generated var/generated.json \
+    --hypothesis-seed 20260810 --bench var/bench.json \
+    --out docs/benchmark-report.md
 ```
 
 Reads, joins on `request_id`, emits markdown. No dashboard, no HTML, no server (`PLAN.md` §3.3 cut three UI surfaces).

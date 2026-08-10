@@ -1,0 +1,215 @@
+# At, below, and above each configured JSON structural limit.  Passing a limit does
+# not mean the request is authorized: the compact `probe` field then reaches the
+# closed registry schema and is rejected there, proving the protocol stage let the
+# boundary value through without allowing a side effect.
+corpus_version = "0.1.0"
+
+[[scenario]]
+id = "proto-boundary-depth-below"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "REG_ARGS_UNKNOWN_FIELD"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "Container depth 31 passes the protocol ceiling and reaches the closed tool schema."
+transport = { boundary = "depth", boundary_value = 32, boundary_offset = -1 }
+
+[[scenario]]
+id = "proto-boundary-depth-at"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "REG_ARGS_UNKNOWN_FIELD"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "Container depth exactly 32 is accepted by both the byte prescan and parsed walk."
+transport = { boundary = "depth", boundary_value = 32 }
+
+[[scenario]]
+id = "proto-boundary-depth-above"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_LIMIT_EXCEEDED"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "Container depth 33 is rejected before registry or policy."
+transport = { boundary = "depth", boundary_value = 32, boundary_offset = 1 }
+
+[[scenario]]
+id = "proto-boundary-array-below"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "REG_ARGS_UNKNOWN_FIELD"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "An array of 999 items passes the request structure limit."
+transport = { boundary = "array", boundary_value = 1000, boundary_offset = -1 }
+
+[[scenario]]
+id = "proto-boundary-array-at"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "REG_ARGS_UNKNOWN_FIELD"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "An array of exactly 1000 items passes."
+transport = { boundary = "array", boundary_value = 1000 }
+
+[[scenario]]
+id = "proto-boundary-array-above"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_LIMIT_EXCEEDED"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "An array of 1001 items is refused at protocol."
+transport = { boundary = "array", boundary_value = 1000, boundary_offset = 1 }
+
+[[scenario]]
+id = "proto-boundary-string-below"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "REG_ARGS_UNKNOWN_FIELD"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "A 65,535-character JSON string passes the protocol ceiling."
+transport = { boundary = "string", boundary_value = 65536, boundary_offset = -1 }
+
+[[scenario]]
+id = "proto-boundary-string-at"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "REG_ARGS_UNKNOWN_FIELD"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "A string exactly 65,536 characters long passes."
+transport = { boundary = "string", boundary_value = 65536 }
+
+[[scenario]]
+id = "proto-boundary-string-above"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_LIMIT_EXCEEDED"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "A 65,537-character string is refused."
+transport = { boundary = "string", boundary_value = 65536, boundary_offset = 1 }
+
+[[scenario]]
+id = "proto-boundary-object-below"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "REG_ARGS_UNKNOWN_FIELD"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "A single object with 499 keys passes."
+transport = { boundary = "object", boundary_value = 500, boundary_offset = -1 }
+
+[[scenario]]
+id = "proto-boundary-object-at"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "REG_ARGS_UNKNOWN_FIELD"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "A single object with exactly 500 keys passes."
+transport = { boundary = "object", boundary_value = 500 }
+
+[[scenario]]
+id = "proto-boundary-object-above"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_LIMIT_EXCEEDED"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "A single object with 501 keys is refused."
+transport = { boundary = "object", boundary_value = 500, boundary_offset = 1 }
+
+[[scenario]]
+id = "proto-boundary-fields-below"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "REG_ARGS_UNKNOWN_FIELD"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "A request with 4,999 total object fields passes without any object exceeding 500 keys."
+transport = { boundary = "fields", boundary_value = 5000, boundary_offset = -1 }
+
+[[scenario]]
+id = "proto-boundary-fields-at"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "REG_ARGS_UNKNOWN_FIELD"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "Exactly 5,000 total object fields passes."
+transport = { boundary = "fields", boundary_value = 5000 }
+
+[[scenario]]
+id = "proto-boundary-fields-above"
+class = "malicious"
+layer = "protocol"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "PROTO_LIMIT_EXCEEDED"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "A request with 5,001 total fields is refused."
+transport = { boundary = "fields", boundary_value = 5000, boundary_offset = 1 }

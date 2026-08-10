@@ -153,6 +153,7 @@ async def test_calls_after_teardown_are_denied(cfg: ChildConfig) -> None:
             await up.call_tool("read_file", {"path": "public/documentation.txt"})
 
 
+@pytest.mark.slow
 async def test_no_child_process_survives_teardown(cfg: ChildConfig) -> None:
     """BRIDGE-009. A leaked child outliving the gateway is a real operational hazard."""
     before = _python_child_count()
@@ -164,9 +165,24 @@ async def test_no_child_process_survives_teardown(cfg: ChildConfig) -> None:
 
 
 def _python_child_count() -> int:
+    """Fixture children only — on BOTH platforms.
+
+    The Windows branch used `tasklist`, which cannot filter on a command line, so it
+    counted every `python.exe` on the machine while the POSIX branch counted only
+    `fixtures.filesystem_server`. Any unrelated Python starting during the half-second
+    settle below failed the assertion, and a second pytest session was enough to do it.
+    A test that fails for something other than the behaviour it names costs a
+    development cycle every time it fires, and teaches people to re-run rather than
+    read. `Get-CimInstance` exposes `CommandLine`, so the two branches can finally
+    mean the same thing.
+    """
     if os.name == "nt":
-        out = os.popen('tasklist /FI "IMAGENAME eq python.exe" /NH').read()
-        return out.count("python.exe")
+        out = os.popen(
+            'powershell -NoProfile -Command "(Get-CimInstance Win32_Process -Filter '
+            "\\\"Name='python.exe'\\\" | Where-Object { $_.CommandLine -like "
+            "'*fixtures.filesystem_server*' } | Measure-Object).Count\""
+        ).read()
+        return int(out.strip() or 0)
     return int(os.popen("pgrep -c -f fixtures.filesystem_server || true").read() or 0)
 
 

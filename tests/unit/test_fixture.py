@@ -263,6 +263,13 @@ def test_oversized_mode_returns_a_huge_result() -> None:
     assert len(modes.apply_to_result("oversized", "small")) == 100 * 1024 * 1024
 
 
+def test_oversized_mode_accepts_a_live_harness_size_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FIXTURE_OVERSIZED_BYTES", str(2 * 1024 * 1024))
+    assert len(modes.apply_to_result("oversized", "small")) == 2 * 1024 * 1024
+
+
 def test_pathological_mode_is_deep_and_wide_on_the_WIRE() -> None:
     """It moved from `apply_to_result` to `apply_to_wire`, and the move is the point.
 

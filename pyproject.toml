@@ -33,7 +33,7 @@ dev = ["pytest", "pytest-anyio", "hypothesis", "ruff", "pyright"]
 testpaths = ["tests"]
 addopts = "-q"
 markers = [
-    "slow: spawns processes or kills them; excluded with -m 'not slow'",
+    "slow: spawns processes or kills them; excluded with -m 'not slow'. Applied AUTOMATICALLY to everything under tests/integration/ (see tests/conftest.py) — a marker that must be remembered stops being true, and this one had: five tests carried it by hand and the fast lane saved 12s of 3min. Expensive UNIT tests still need it explicitly, because nothing structural separates them from the fast ones beside them.",
 ]
 
 [tool.ruff]

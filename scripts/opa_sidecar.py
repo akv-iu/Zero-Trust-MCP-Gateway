@@ -22,6 +22,7 @@ import subprocess
 import time
 from collections.abc import Generator
 from contextlib import closing, contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
@@ -63,6 +64,23 @@ def _free_port() -> int:
         return int(s.getsockname()[1])
 
 
+@dataclass(frozen=True)
+class RunningSidecar:
+    """A test-owned OPA process that can be terminated after gateway readiness."""
+
+    base_url: str
+    process: subprocess.Popen[bytes]
+
+    def stop(self) -> None:
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=10)
+            except subprocess.TimeoutExpired:  # pragma: no cover - belt and braces
+                self.process.kill()
+                self.process.wait(timeout=10)
+
+
 @contextmanager
 def sidecar(port: int | None = None, bundle: Path = BUNDLE) -> Generator[str]:
     """Yield the base URL of a running OPA, or raise if one cannot be started.
@@ -75,6 +93,15 @@ def sidecar(port: int | None = None, bundle: Path = BUNDLE) -> Generator[str]:
     gateway's audit log is the record of what was decided; a second, unminimised copy
     on a child process's stdout is not something this project should be producing.
     """
+    with controlled_sidecar(port=port, bundle=bundle) as running:
+        yield running.base_url
+
+
+@contextmanager
+def controlled_sidecar(
+    port: int | None = None, bundle: Path = BUNDLE
+) -> Generator[RunningSidecar]:
+    """Yield the process handle for chaos tests; production never calls this."""
     binary = find_binary()
     if binary is None:
         raise RuntimeError(
@@ -88,6 +115,7 @@ def sidecar(port: int | None = None, bundle: Path = BUNDLE) -> Generator[str]:
 
     port = port or _free_port()
     base_url = f"http://127.0.0.1:{port}"
+    bundle_path = bundle.resolve()
     process = subprocess.Popen(  # noqa: S603 - see above
         [
             str(binary),
@@ -99,22 +127,17 @@ def sidecar(port: int | None = None, bundle: Path = BUNDLE) -> Generator[str]:
             "decision_logs.console=false",
             "--log-level",
             "error",
-            str(bundle),
+            bundle_path.name,
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
-        cwd=str(REPO),
+        cwd=str(bundle_path.parent),
     )
     try:
         _await_health(process, base_url)
-        yield base_url
+        yield RunningSidecar(base_url, process)
     finally:
-        process.terminate()
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:  # pragma: no cover - belt and braces
-            process.kill()
-            process.wait(timeout=10)
+        RunningSidecar(base_url, process).stop()
 
 
 def _await_health(process: subprocess.Popen[bytes], base_url: str) -> None:

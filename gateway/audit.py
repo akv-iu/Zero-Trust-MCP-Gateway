@@ -113,6 +113,25 @@ class AuditBuilder:
         self._fields.setdefault("reason_code", ReasonCode.ROUTE_CANCELLED.value)
         self.set_outcome("cancelled")
 
+    def reattribute_upstream_cancellation(self, status: str) -> None:
+        """Correct stage 07's guess about WHY its upstream call was cancelled.
+
+        An anyio cancellation carries no reason, so `router._bounded` can only record
+        `cancelled` — the one thing a bare cancellation means from inside the call.
+        But the request deadline in `pipeline.handle` cancels that same await, and only
+        the scope that owns the deadline knows it fired. Without this, an expired
+        request produced ONE event saying `reason_code=ROUTE_TIMEOUT` next to
+        `upstream_status=cancelled`: a record contradicting itself about whether the
+        client left or the clock ran out, which is exactly the pair ROUTE-010 exists to
+        keep apart (Codex review, reproduced with a probe).
+
+        Deliberately narrow. It rewrites ONLY a recorded `cancelled`, so a request that
+        expired before ever reaching stage 07 keeps `upstream_status` unset rather than
+        gaining a claim that an upstream was contacted.
+        """
+        if self._fields.get("upstream_status") == "cancelled":
+            self._fields["upstream_status"] = status
+
     def finalize(self) -> RequestEvent:
         """AUDIT-003: a record that will not validate is an audit FAILURE.
 

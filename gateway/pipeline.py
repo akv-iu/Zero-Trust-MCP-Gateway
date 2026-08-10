@@ -58,6 +58,13 @@ async def handle(env: RawEnvelope, deps: Deps) -> Untrusted[JsonObject]:
         # Reached only when the deadline above cancelled the stages: `move_on_after`
         # swallows its own cancellation, so this is a normal fall-through rather than
         # an exception path, and naming the reason is the whole point of the move.
+        #
+        # Stage 07 already recorded `upstream_status="cancelled"`, because a bare anyio
+        # cancellation is the only thing it can see from inside the await. THIS scope is
+        # the one that knows better, and it is the only one that does — so it corrects
+        # the attribution before the reason code is set. Skipping this left one event
+        # claiming ROUTE_TIMEOUT and `cancelled` at once (Codex review).
+        builder.reattribute_upstream_cancellation("timeout")
         raise GatewayDenial(
             ReasonCode.ROUTE_TIMEOUT, detail=f"{deps.config.edge.request_timeout_s}s"
         )
@@ -132,6 +139,10 @@ async def _stages(
         # raising and would otherwise contribute nothing.
         raw = await router.route(req, ctx, drv, dec, deps)
     with builder.stage(Stage.RESPONSE):
-        out = response.validate(raw, req, dec.obligations, deps.config.response)
+        # `raw.obligations`, NOT `dec.obligations`: unit 07 clamped what policy asked
+        # for and audited the clamped value, so passing the decision's own number here
+        # enforced a ceiling the record said had been lowered (Codex review). The
+        # effective value now rides on the result and there is nothing else to pass.
+        out = response.validate(raw, req, deps.config.response)
     builder.set_outcome("allowed")
     return out

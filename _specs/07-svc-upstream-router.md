@@ -58,7 +58,9 @@ Its contract is therefore narrow and absolute: it runs **if and only if** a vali
 
 **ROUTE-005 (`REQ-REL-001`)** — The policy-supplied `timeout_ms` MUST be enforced on the upstream call and MUST NOT exceed the gateway's configured ceiling or the bridge's total request deadline, whichever is lower. No protected call may wait indefinitely.
 
-**ROUTE-006** — The `max_response_bytes` obligation MUST be enforced as a **streaming** limit: the router stops reading and aborts once the ceiling is crossed. It MUST NOT buffer an unbounded response and then measure it.
+**ROUTE-006** — The `max_response_bytes` obligation MUST be **measured by the router and enforced by unit 08** against the value the router actually applied after clamping, which travels on `RawResult.obligations`. The response is already materialised when it is measured, so the property is **detected and denied**, NOT prevented from being buffered.
+
+The **streaming** form this requirement originally specified — stop reading and abort once the ceiling is crossed, never buffer then measure — is **deferred and unbuildable against the pinned SDK**: `stdio_client` accumulates a whole line and parses it into a `SessionMessage` before this module sees a byte ([90 §10g](90-deferred-register.md)). Restating the stronger claim anywhere is the failure mode this requirement now guards against: a hostile child inside the trust boundary can still make the gateway hold one reply in memory.
 
 **ROUTE-007** — Every obligation actually enforced MUST be recorded in the audit event *as enforced*, which may differ from as-requested when clamping occurred (`POLICY-007`).
 
@@ -88,7 +90,7 @@ Its contract is therefore narrow and absolute: it runs **if and only if** a vali
 | Authorized call ≠ call about to be sent | abort | `ROUTE_AUTHORIZATION_DIVERGENCE` |
 | Upstream unavailable / channel broken | controlled error | `ROUTE_UPSTREAM_UNAVAILABLE` |
 | Upstream timeout | controlled error, no retry | `ROUTE_TIMEOUT` |
-| Response exceeds byte ceiling | abort mid-stream | `ROUTE_RESPONSE_TOO_LARGE` |
+| Response exceeds byte ceiling | measure after materialisation; unit 08 denies | `RESP_TOO_LARGE` (unit 08) |
 | Client cancelled | propagate, audit `cancelled` | `ROUTE_CANCELLED` |
 
 ---
@@ -113,7 +115,7 @@ Upstream timeout ceiling; response byte ceiling. All bounded by unit 01's total 
 2. A fabricated allow object carrying a different `request_id` is rejected.
 3. An argument mutated between policy evaluation and forwarding aborts with `ROUTE_AUTHORIZATION_DIVERGENCE` — injected deliberately at a test seam.
 4. A policy timeout obligation shorter than the ceiling is honored; one longer is clamped by unit 06 and the clamped value is what the router enforces.
-5. A fixture tool that returns a response larger than the ceiling is aborted **mid-stream** — asserted by peak memory not growing to the full response size.
+5. A fixture tool that returns a response larger than the ceiling is **detected and denied**, and the count the router recorded is the one unit 08 refuses on. The mid-stream abort this item originally asked for — asserted by peak memory not growing — is **deferred and unbuildable against the pinned SDK**, which parses a whole line before this module sees a byte: [90 §10g](90-deferred-register.md). The shipped claim is "an oversized response is detected and denied", never "cannot exhaust memory"; restating the stronger one is the failure this item now guards against.
 6. An upstream that hangs hits the timeout, the client gets a controlled error, and the call is not retried.
 7. An upstream that crashes mid-call produces `ROUTE_UPSTREAM_UNAVAILABLE`, not a success and not a hang.
 8. Client cancellation propagates; the fixture observes the cancellation; the audit event says `cancelled`, not `error`.
@@ -126,5 +128,5 @@ Upstream timeout ceiling; response byte ceiling. All bounded by unit 01's total 
 ## 10. Notes for the tech sheet
 
 - `ROUTE-002` is best implemented by having the router take the *decision* and re-derive the message from the same canonical request the decision was made against — so divergence is impossible rather than detected. Keep the detection test anyway; it guards refactors.
-- Streaming the response-size ceiling (`ROUTE-006`) matters more than it looks: buffer-then-measure turns a size limit into a memory exhaustion vector, which is precisely the attack class the limit exists to stop.
+- Streaming the response-size ceiling (`ROUTE-006`) was specified because buffer-then-measure turns a size limit into a memory exhaustion vector. The pinned SDK forecloses it, so v1 ships the weaker property and says so; the trigger for revisiting is owning the child's stdout reader ([90 §10g](90-deferred-register.md)).
 - No-retry is a deliberate simplification with a known ceiling: the fixture has no idempotency keys, so a retry could double a write. If an idempotent business fixture ever lands, revisit — that trigger is in the deferred register.

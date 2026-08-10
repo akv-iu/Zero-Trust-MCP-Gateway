@@ -905,12 +905,23 @@ def test_the_published_corpus_scores_against_the_real_guard(scenario: Any) -> No
     ALLOWED is unit 06's answer and the full harness's assertion — the point of
     keeping it in this file is that a gateway which denies everything must not score
     100% on the malicious rows.
+
+    THIS TEST SCORES STAGE 02 AND ONLY STAGE 02, so a `layer = "protocol"` row whose
+    `expected_reason` belongs to a later stage is asserted to SURVIVE the guard rather
+    than to be denied by it. That is not a skip and it is not a weakening: a row
+    expecting `REG_ARGS_UNKNOWN_FIELD` is making a claim about stage 04, and the claim
+    it makes about stage 02 is precisely "this reaches you intact". Asserting a
+    `ProtocolDenial` for it would fail a correct corpus row and, worse, would pass the
+    day unit 02 started over-rejecting — scoring a stage-04 denial as proof that stage
+    02 works. The structural-boundary rows are the case that found this: `-at` and
+    `-below` sit inside every limit unit 02 enforces, by construction.
     """
     from harness.wire import build_envelope
 
     env = build_envelope(scenario)
+    decided_here = scenario.expected_reason.startswith("PROTO_")
 
-    if scenario.expected_decision == "allow":
+    if scenario.expected_decision == "allow" or not decided_here:
         req = protocol.validate(env, CFG)
         assert req.tool_name == scenario.tool
         return

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable, Iterable
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import anyio
@@ -148,6 +148,30 @@ class Edge:
             # a handler that enforces none, and it is deliberately slower.
             with anyio.fail_after(self.cfg.request_timeout_s * HANDLER_BACKSTOP):
                 result = await self._run_watching_for_disconnect(env, receive)
+        except GatewayDenial as denial:
+            await _error(
+                send,
+                denial.reason_code,
+                rid,
+                jsonrpc_id=_jsonrpc_id(body),
+            )
+            return
+        except TimeoutError:
+            await _error(
+                send,
+                ReasonCode.ROUTE_TIMEOUT,
+                rid,
+                jsonrpc_id=_jsonrpc_id(body),
+            )
+            return
+        except Exception:  # noqa: BLE001 - never leak a traceback to the client
+            await _error(
+                send,
+                ReasonCode.INTERNAL_ERROR,
+                rid,
+                jsonrpc_id=_jsonrpc_id(body),
+            )
+            return
         finally:
             self._slots.release()
 
@@ -246,7 +270,12 @@ async def _send(send: Send, status: int, body: bytes) -> None:
 
 
 async def _error(
-    send: Send, code: ReasonCode, request_id: str, *, status: int | None = None
+    send: Send,
+    code: ReasonCode,
+    request_id: str,
+    *,
+    status: int | None = None,
+    jsonrpc_id: Any = None,
 ) -> None:
     """Wire shapes are spec-mandated, not free choices (ADR-001 §2).
 
@@ -257,7 +286,7 @@ async def _error(
     body = json.dumps(
         {
             "jsonrpc": "2.0",
-            "id": None,
+            "id": jsonrpc_id,
             "error": {
                 "code": rpc,
                 "message": safe_message(code),
@@ -266,6 +295,17 @@ async def _error(
         }
     ).encode("utf-8")
     await _send(send, status or http, body)
+
+
+def _jsonrpc_id(body: bytes) -> Any:
+    """Recover a request id only when the received body is a JSON object."""
+    try:
+        value = json.loads(body)
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    return cast("dict[str, Any]", value).get("id")
 
 
 def _now_ns() -> int:

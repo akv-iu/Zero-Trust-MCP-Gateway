@@ -3,6 +3,13 @@
     python -m scripts.run_corpus                    # direct mode: unprotected baseline
     python -m scripts.run_corpus --mode protected   # the system under test
     python -m scripts.run_corpus --break-enforcer   # negative control: harness blind?
+    python -m scripts.run_corpus --profile full     # every row; required for evidence
+
+`--profile smoke` is the DEFAULT and scores 50 deterministically chosen rows covering
+every reason code and every fixture mode. It exists because a full protected run is
+the slowest thing in this project and most of it re-proves rows that did not change.
+It is a development signal: the banner says so, the artifact records `profile`, and
+`harness.report` refuses to build evidence from anything but `full`.
 
 `direct` establishes the "before" picture; `protected` is the number the project is
 actually about. Neither is meaningful without the other, and neither is meaningful
@@ -20,8 +27,9 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any, Final
 
@@ -95,14 +103,7 @@ class _Unavailable(RuntimeError):
 @contextmanager
 def _client(args: Any, work: Path, root: Path, chosen: Any) -> Generator[Any]:
     """The client for the requested mode, and everything it needs, torn down on exit."""
-    if args.break_enforcer:
-        os.environ["ZTMG_ALLOW_DIRECT"] = "1"
-        from tests.unit.test_harness import StubEnforcer  # noqa: PLC0415
-
-        yield StubEnforcer(containment_enabled=False), "BROKEN ENFORCER"
-        return
-
-    if args.mode == "direct":
+    if args.mode == "direct" and not args.break_enforcer:
         os.environ["ZTMG_ALLOW_DIRECT"] = "1"
         from harness.clients import DirectClient  # noqa: PLC0415
 
@@ -112,8 +113,12 @@ def _client(args: Any, work: Path, root: Path, chosen: Any) -> Generator[Any]:
     # protected. `ZTMG_ALLOW_DIRECT` is deliberately NOT set: HARN-001 requires that
     # direct mode be unreachable from a protected configuration, and the cheapest way
     # to mean it is for the environment that could reach it not to exist here.
-    from harness.clients import protected, write_configs  # noqa: PLC0415
-    from scripts.opa_sidecar import find_binary, sidecar  # noqa: PLC0415
+    from harness.clients import protected, write_deployments  # noqa: PLC0415
+    from scripts.opa_sidecar import (  # noqa: PLC0415
+        controlled_sidecar,
+        find_binary,
+        sidecar,
+    )
 
     if find_binary() is None:
         raise _Unavailable(
@@ -122,19 +127,75 @@ def _client(args: Any, work: Path, root: Path, chosen: Any) -> Generator[Any]:
         )
 
     principals = tuple(sorted({s.principal for s in chosen}))
-    with sidecar() as opa_url:
-        configs = write_configs(
-            principals,
+    with ExitStack() as stack:
+        bundle = _broken_policy_bundle(work) if args.break_enforcer else None
+        opa_url = stack.enter_context(
+            sidecar(bundle=bundle) if bundle is not None else sidecar()
+        )
+        killed = (
+            stack.enter_context(controlled_sidecar())
+            if any(s.gateway_fault == "opa_killed" for s in chosen)
+            else None
+        )
+        configs = write_deployments(
+            tuple(chosen),
             source=Path("config/gateway.toml"),
             work=work,
             fixture_root=root,
             opa_url=opa_url,
+            killed_opa_url=killed.base_url if killed else None,
+            on_opa_ready=killed.stop if killed else None,
         )
         with protected(configs) as client:
             yield (
                 client,
-                f"protected ({len(principals)} gateways: {', '.join(principals)})",
+                f"{'BROKEN REAL POLICY; ' if args.break_enforcer else ''}protected "
+                f"({len(configs)} gateways; principals: "
+                f"{', '.join(principals)})",
             )
+
+
+def _broken_policy_bundle(work: Path) -> Path:
+    """A real OPA bundle that deliberately allows every policy-stage request."""
+    source = Path("policies/rego")
+    destination = work / "broken-policy"
+    shutil.copytree(source, destination)
+    (destination / "gateway" / "decision.rego").write_text(
+        """\
+package gateway
+
+import rego.v1
+
+decision := {
+    "decision": "allow",
+    "reason_code": allow_code,
+    "risk_tier": input.target.registry_risk_tier,
+    "obligations": {"timeout_ms": 3000, "max_response_bytes": 1048576},
+}
+
+response(verdict, code) := {
+    "decision": verdict,
+    "reason_code": code,
+    "risk_tier": input.target.registry_risk_tier,
+    "obligations": {"timeout_ms": 3000, "max_response_bytes": 1048576},
+}
+
+is_discovery if input.target.tool_name == null
+
+allow_code := "POLICY_METADATA_READ" if input.target.registry_risk_tier == "R0"
+allow_code := "POLICY_SCOPED_READ" if {
+    input.target.registry_risk_tier != "R0"
+    input.arguments.operation == "read"
+}
+allow_code := "POLICY_SCOPED_WRITE" if {
+    input.target.registry_risk_tier != "R0"
+    input.arguments.operation != "read"
+}
+""",
+        encoding="utf-8",
+        newline="\n",
+    )
+    return destination
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -145,10 +206,32 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="negative control: run a deliberately broken enforcer",
     )
+    ap.add_argument(
+        "--profile",
+        choices=["smoke", "full"],
+        default="smoke",
+        help=(
+            "smoke (default): the deterministic 50-row development lane. "
+            "full: every row — required for any published number"
+        ),
+    )
     ap.add_argument("--only", default="", help="substring filter on scenario id")
+    ap.add_argument("--out", type=Path, help="write scored oracle results as JSON")
+    ap.add_argument(
+        "--evidence-dir",
+        type=Path,
+        help="keep audit/oplog/config evidence here (directory must be empty)",
+    )
     args = ap.parse_args(argv)
 
-    work = Path(tempfile.mkdtemp(prefix="ztmg_corpus_"))
+    keep_evidence = args.evidence_dir is not None
+    if keep_evidence:
+        work = args.evidence_dir
+        if work.exists() and any(work.iterdir()):
+            ap.error(f"--evidence-dir must be empty: {work}")
+        work.mkdir(parents=True, exist_ok=True)
+    else:
+        work = Path(tempfile.mkdtemp(prefix="ztmg_corpus_"))
     root = work / "fixture"
     os.environ["FIXTURE_ROOT"] = str(root)
     os.environ["FIXTURE_OPLOG"] = str(work / "oplog.jsonl")
@@ -162,19 +245,52 @@ def main(argv: list[str] | None = None) -> int:
 
     build(root)
     corpus = scen.load()
-    chosen = tuple(s for s in corpus.scenarios if args.only in s.id)
+    pool = corpus.scenarios if args.profile == "full" else scen.smoke(corpus.scenarios)
+    chosen = tuple(s for s in pool if args.only in s.id)
+    if not chosen:
+        # Zero scenarios resolve to zero failures, and every exit-code path below then
+        # returns 0. A green run that scored nothing is the worst possible output, and
+        # `--only` against the default smoke subset makes it easy to reach by accident:
+        # a row that exists in the corpus but is not among the 50 matches nothing here.
+        in_corpus = sum(1 for s in corpus.scenarios if args.only in s.id)
+        hint = (
+            f" — {in_corpus} row(s) match in the full corpus; add --profile full"
+            if in_corpus
+            else ""
+        )
+        ap.error(f"no scenarios matched --only {args.only!r} in {args.profile}{hint}")
 
-    print(f"\n{B}Corpus {corpus.version} - {args.mode}{X}")
-    print(f"{D}{len(chosen)} scenarios | symlink traps: {links_available(root)}{X}\n")
+    mode_label = "protected negative control" if args.break_enforcer else args.mode
+    print(f"\n{B}Corpus {corpus.version} - {mode_label}{X}")
+    print(f"{D}{len(chosen)} scenarios | symlink traps: {links_available(root)}{X}")
+    if args.profile != "full":
+        # Loud, and before the numbers rather than after them. A subset score read as
+        # a corpus score is the one way this lane can do damage.
+        print(
+            f"{Y}{B}SMOKE PROFILE — {len(chosen)} of {len(corpus.scenarios)} rows.{X}"
+            f"{Y} Development signal only; not evidence. Use --profile full for any "
+            f"number that leaves this terminal.{X}"
+        )
+    print()
 
+    started = time.perf_counter()
     try:
         with _client(args, work, root, chosen) as (client, label):
-            print(f"{D}client: {label}{X}\n")
-            report = run_corpus(chosen, client, Oracle(root), root=root)
+            booted = time.perf_counter()
+            print(f"{D}client: {label}{X}")
+            print(f"{D}deployments ready in {booted - started:.1f}s{X}\n")
+            report = run_corpus(
+                chosen, client, Oracle(root), root=root, profile=args.profile
+            )
+            scored = time.perf_counter()
     except _Unavailable as e:
         print(f"{R}{e}{X}")
-        shutil.rmtree(work, ignore_errors=True)
+        if not keep_evidence:
+            shutil.rmtree(work, ignore_errors=True)
         return 2
+
+    if args.out is not None:
+        report.write(args.out, corpus_version=corpus.version)
 
     for r in report.results:
         c = COLOUR.get(r.verdict.value, "")
@@ -185,6 +301,13 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     print(f"\n{B}{report.summary()}{X}")
+    # Split, because the two halves have different fixes: boot time comes down by
+    # needing fewer deployment variants, scoring time by needing fewer rows. A single
+    # wall-clock number would send you to optimise whichever one you guessed.
+    print(
+        f"{D}  boot {booted - started:.1f}s | scored {scored - booted:.1f}s "
+        f"({(scored - booted) / max(len(chosen), 1):.1f}s per row){X}"
+    )
     print(
         f"  prohibited side effects observed : "
         f"{(R if report.prohibited_effects else G)}{report.prohibited_effects}{X}"
@@ -202,19 +325,24 @@ def main(argv: list[str] | None = None) -> int:
             else R + "FAIL - THE HARNESS IS BLIND" + X
         )
         print(f"\n{B}Negative control:{X} {verdict}")
-        shutil.rmtree(work, ignore_errors=True)
+        if not keep_evidence:
+            shutil.rmtree(work, ignore_errors=True)
         return 0 if ok else 1
 
-    shutil.rmtree(work, ignore_errors=True)
+    if keep_evidence:
+        print(f"\n{D}evidence kept at: {work}{X}")
+    else:
+        shutil.rmtree(work, ignore_errors=True)
 
     if args.mode == "direct":
         print(
             f"\n{D}Baseline established. The gateway must reduce CRITICAL to 0 while "
             f"keeping every legitimate scenario passing.{X}\n"
         )
-        return 0 if report.count(Verdict.PASS) == len(corpus.legitimate()) else 1
+        chosen_legitimate = sum(s.kind == "legitimate" for s in chosen)
+        return 0 if report.count(Verdict.PASS) == chosen_legitimate else 1
 
-    legit = {s.id for s in corpus.legitimate()}
+    legit = {s.id for s in chosen if s.kind == "legitimate"}
     legit_passed = sum(
         1 for r in report.results if r.scenario_id in legit and r.verdict is Verdict.PASS
     )

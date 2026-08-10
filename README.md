@@ -14,38 +14,59 @@ unit must do is in [`_specs/`](_specs/); how to build it is in [`_tech/`](_tech/
 
 ## Status
 
-Units built: foundation, 10 (fixture), 11 (harness skeleton), 09 (audit), 01 (HTTP
-edge + stdio upstream bridge), 02 (protocol guard), 03 (identity), 04 (registry),
-05 (filesystem canonicalizer), 06 (OPA policy broker + Rego bundle), 07 (upstream
-router), 08 (response guard). **The pipeline completes end to end** — a request goes
-in one end and a tool result comes out the other, against a real policy engine and a
-real child server. Build order and state: [PLAN.md §4.2](PLAN.md).
+Units built: foundation, 10 (fixture), 09 (audit), 01 (HTTP edge + stdio upstream
+bridge), 02 (protocol guard), 03 (identity), 04 (registry), 05 (filesystem
+canonicalizer), 06 (OPA policy broker + Rego bundle), 07 (upstream router), 08
+(response guard), and 11 (evaluation harness). **The pipeline completes end to end** —
+a request goes in one end and a tool result comes out the other, against a real policy
+engine and a real child server. Build order and state: [PLAN.md §4.2](PLAN.md).
 
 **The corpus now scores in `protected` mode.** Every row goes over a real HTTP socket
 into a real gateway, against a real policy engine and a real child server, and each
 verdict is decided by the side-effect oracle reading the fixture's own operation log —
-not by the gateway's answer. Against corpus version 0.1.0, 66 scenarios:
+not by the gateway's answer. Corpus version 0.1.0 now contains **118 hand-written
+scenarios** (97 malicious, 21 legitimate), including real fixture-mode deployments,
+all structural limits at/below/above their boundaries, and both sides of the complete
+three-principal policy matrix.
 
 | Mode | Prohibited side effects observed | Legitimate rows passing |
 |---|---|---|
-| `direct` — no gateway | 12 | 9/9 |
-| broken enforcer — negative control | 37 | 9/9 |
-| `protected` — the system under test | **0** | **9/9** |
+| `direct` — no gateway | 23 | 21/21 |
+| broken real policy — negative control | 13 detected | n/a |
+| `protected` — the system under test | **0** | **21/21** |
 
-63 PASS, 3 SKIPPED (two need symlinks, unavailable on Windows; one is normalized by a
+115 PASS, 3 SKIPPED (two need symlinks, unavailable on Windows; one is normalized by a
 conforming HTTP transport into a legitimate request and is scored in
-`tests/integration/test_protocol_over_http.py` instead). Every scored row is also
-joined to its own audit event; a decision that cannot be correlated to a record is
-reported `INDETERMINATE` and never as a pass.
+`tests/integration/test_protocol_over_http.py` instead). `direct` skips 52 rows because
+a scenario carrying wire damage has no wire to damage without a gateway in the path.
 
-Read that with its scope attached, and with what is still owed. The corpus is **66
-rows against a target of 100+**, so these are early numbers on a corpus that has not
-finished growing; the families still missing are listed in
-[SPEC-11 §7](_specs/11-svc-eval-harness.md). There is no overhead measurement yet, no
-generated-case counts, and no report generator. And **unit 07's own acceptance tests
-are still owed** — they were skipped at the author's instruction, and a review then
-found two authorization bypasses that those tests would have caught (both fixed; see
-[PLAN.md §4.2](PLAN.md)).
+Every scored row is joined to its own audit event; a decision that cannot be correlated
+to a record is reported `INDETERMINATE` and never as a pass. Read the middle row before
+the last one: the negative control exists so that a `0` in the bottom row is evidence
+the harness can see failure, rather than evidence it is blind.
+
+Those figures are from `--profile full` — all 118 rows. There is a 50-row smoke lane for
+development and it is never the source of a published number; see
+[Fast lanes](#fast-lanes-and-when-not-to-use-them).
+
+Unit 11 now includes seeded Hypothesis generation (five required families), the
+alternating paired benchmark (N ≥ 1,000 plus a separately labelled modest-concurrency
+run), and the strict Markdown report generator. Those tools publish observed numbers
+without a latency threshold and refuse stale, mixed, incomplete, or provenance-mismatched
+evidence. The current [benchmark report](docs/benchmark-report.md) records 2,500/2,500
+CI-profile generated cases passing from seed `11011`. A 25,000-case release-profile
+attempt reached the two-hour local timeout without completing, so no release-profile
+result is claimed.
+
+Current co-located added overhead, from 900 retained pairs after the documented 10%
+warmup of each N=1,000 run:
+
+| Run | p50 | p95 | p99 | min | max |
+|---|---:|---:|---:|---:|---:|
+| Single concurrency | 54.457 ms | 75.404 ms | 119.292 ms | 28.037 ms | 160.160 ms |
+| Concurrency 4 | 21.964 ms | 27.375 ms | 31.779 ms | 9.321 ms | 35.890 ms |
+
+These are development measurements, not throughput or capacity claims.
 
 The client edge is **Streamable HTTP on loopback**; only the upstream leg to the
 child server is stdio ([ADR-001](_specs/ADR-001-transport-and-mirrored-metadata.md)).
@@ -89,13 +110,47 @@ The full analysis is in [docs/threat-model.md](docs/threat-model.md).
 
 ```bash
 python -m pytest tests/ -q                    # full suite; no network, no API key
+python -m pytest tests/ -q -m "not slow"      # fast lane: skips the process-spawning tests
 python -m scripts.damage_demo                 # what an unprotected client can do
-python -m scripts.run_corpus                  # score the corpus, direct mode
-python -m scripts.run_corpus --mode protected # score it through the gateway (needs OPA)
-python -m scripts.run_corpus --break-enforcer # negative control: is the harness blind?
+python -m scripts.run_corpus                  # 50-row direct smoke lane
+python -m scripts.run_corpus --mode protected # 50-row protected smoke lane (needs OPA)
+python -m scripts.run_corpus --mode protected --profile full --out var/corpus.json
+python -m scripts.run_corpus --break-enforcer --profile full # publishable negative control
+python -m scripts.run_generated --seed 11011 --profile ci --out var/generated.json
+python -m scripts.run_benchmark --out var/bench.json
+python -m harness.report --help              # strict evidence -> Markdown builder
 ruff check . && ruff format --check .
 pyright gateway harness scripts
 ```
+
+### Fast lanes, and when not to use them
+
+The corpus and the generator both default to a subset, because the full runs are the
+two slowest things here and most of a development session re-proves rows that did not
+change. Measured on the development machine:
+
+| Command | Default | Full |
+|---|---|---|
+| `pytest` | `-m "not slow"`, 686 tests, **43 s** | 751 tests + 7 skips, **2 m 29 s** |
+| `run_corpus` | `--profile smoke`, 50 rows, **~45 s** protected | `--profile full`, 118 rows, **~53 s** |
+| `run_generated` | `--profile dev`, 250 cases, **~26 s** | `--profile release`, 25,000 cases, **hours** |
+
+`slow` is applied automatically to everything under `tests/integration/` — it had been
+applied by hand to five tests, which made the fast lane worth twelve seconds. Expensive
+*unit* tests still carry the marker explicitly, since nothing structural separates them
+from the fast ones in the same file.
+
+The smoke 50 are picked coverage-greedily over
+`(layer, expected_reason, fixture_mode, gateway_fault)` in id order — deterministic, so
+a smoke failure reproduces — and they cover all 35 reason codes, all 11 fixture modes
+and all 3 principals. The remaining budget goes to legitimate rows first, so a gateway
+that simply refused everything could not look healthy in the fast lane.
+
+**No hand-written corpus number in this README comes from the smoke lane.**
+`harness.report` refuses a corpus artifact whose `profile` is not `full`, and refuses
+a missing profile rather than assuming one. Generated evidence is labelled separately:
+the current published result uses the 2,500-case `ci` profile, not the 250-case `dev`
+lane or the incomplete 25,000-case `release` attempt.
 
 Development targets WSL2, which gives the strong fixture-isolation tier and working
 symlinks. On Windows three symlink tests skip (reported SKIPPED, never passed) and

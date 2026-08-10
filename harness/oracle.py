@@ -31,6 +31,8 @@ class Effect:
     requested: str
     resolved: str
     outcome: str
+    pid: int | None = None
+    seq: int | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -103,6 +105,8 @@ def _effect(o: dict[str, Any]) -> Effect:
         requested=o["requested"],
         resolved=o.get("resolved", ""),
         outcome=o.get("outcome", "attempted"),
+        pid=o.get("pid"),
+        seq=o.get("seq"),
     )
 
 

@@ -63,10 +63,24 @@ CFG = ProtocolConfig()
 
 
 def malicious_protocol_rows() -> list[Any]:
+    """Rows this file can actually score: denied, and denied BY UNIT 02.
+
+    The handler below runs stage 02 alone, so a `layer = "protocol"` row expecting a
+    later stage's reason code — `REG_ARGS_UNKNOWN_FIELD` on the structural-boundary
+    rows, which sit inside every limit unit 02 enforces — correctly passes the guard.
+    Including them broke the mediation assertion at the bottom, which counts what got
+    past the guard and requires it to be exactly the transport-normalized rows.
+
+    Filtering here rather than loosening that assertion: it is the strongest claim in
+    this file and the one worth keeping exact. Those rows are scored end to end by
+    `scripts.run_corpus --mode protected`, where every stage is present to decide them.
+    """
     return [
         s
         for s in load().scenarios
-        if s.layer == "protocol" and s.expected_decision == "deny"
+        if s.layer == "protocol"
+        and s.expected_decision == "deny"
+        and s.expected_reason.startswith("PROTO_")
     ]
 
 

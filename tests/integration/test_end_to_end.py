@@ -285,15 +285,72 @@ async def test_the_live_pathological_response_reaches_the_guard_and_is_refused(
         is_error=False,
         byte_count=len(canonical_json(content)),
         upstream_latency_ns=1,
+        obligations=Obligations(timeout_ms=3_000, max_response_bytes=4_194_304),
     )
     with pytest.raises(ResponseDenial) as exc:
-        guard.validate(
-            raw,
-            req,
-            Obligations(timeout_ms=3_000, max_response_bytes=4_194_304),
-            ResponseConfig(),
-        )
+        guard.validate(raw, req, ResponseConfig())
     assert exc.value.reason_code is ReasonCode.RESP_LIMIT_EXCEEDED
+
+
+async def test_an_expired_request_deadline_is_not_recorded_as_a_client_cancellation(
+    tmp_path: Path, opa_url: str
+) -> None:
+    """ROUTE-010, through the whole pipeline, because that is where it broke.
+
+    An anyio cancellation carries no reason, so `router._bounded` records `cancelled` —
+    the only thing a bare cancellation can mean from inside the await. But the request
+    deadline in `pipeline.handle` cancels that same await. The result was ONE audit
+    event saying `reason_code=ROUTE_TIMEOUT` next to `upstream_status=cancelled`: a
+    record contradicting itself about whether the client left or the clock ran out.
+
+    Found by Codex and reproduced with a probe. `test_8` in the router tests cancels via
+    a task group and structurally cannot see this path — only the real nesting can, so
+    this test drives the real one: `request_timeout_s` is set BELOW the policy timeout
+    obligation, so the pipeline's deadline is guaranteed to be the scope that fires.
+    """
+    fixture = tmp_path / "fixture"
+    build(fixture)
+    os.environ["FIXTURE_ROOT"] = str(fixture)
+    os.environ["FIXTURE_OPLOG"] = str(tmp_path / "oplog.jsonl")
+    os.environ["FIXTURE_ALLOW_WEAK_ISOLATION"] = "1"
+    os.environ["FIXTURE_MODE"] = "hang"
+
+    posix = str(fixture).replace("\\", "/")
+    text = (REPO / "config" / "gateway.toml").read_text("utf-8")
+    text = text.replace('base = "var/fixture"', f"base = {json.dumps(str(fixture))}")
+    text = text.replace('path = "var/fixture/', f'path = "{posix}/')
+    text = text.replace("http://127.0.0.1:8181", opa_url)
+    text = text.replace(
+        'path = "var/audit.jsonl"', f"path = {json.dumps(str(tmp_path / 'audit.jsonl'))}"
+    )
+    # Below the policy `default_timeout_ms` of 3000, so the PIPELINE deadline wins the
+    # race against unit 07's own obligation timeout. At or above it, `_bounded` would
+    # raise ROUTE_TIMEOUT itself and this path would never be entered.
+    text = text.replace("request_timeout_s = 30.0", "request_timeout_s = 1.0")
+    cfg_path = tmp_path / "gateway.toml"
+    cfg_path.write_text(text, encoding="utf-8")
+    shutil.copy(REPO / "config" / "registry.toml", tmp_path / "registry.toml")
+
+    async with startup.serve(cfg_path) as deps:
+        with pytest.raises(GatewayDenial) as exc:
+            env = envelope(
+                "e2e-hang", "read_file", {"path": "public/documentation.txt"}, "dev"
+            )
+            await handle(env, deps)
+    assert exc.value.reason_code is ReasonCode.ROUTE_TIMEOUT
+
+    events = list(read_events(tmp_path / "audit.jsonl"))
+    (record,) = [
+        e
+        for e in events
+        if e.event_type == "request" and getattr(e, "request_id", None) == "e2e-hang"
+    ]
+    assert record.reason_code == ReasonCode.ROUTE_TIMEOUT.value
+    assert record.outcome == "timeout"
+    assert record.upstream_status == "timeout", (
+        f"the deadline was recorded as {record.upstream_status!r}; one event cannot say "
+        "the clock ran out and the client left at the same time (ROUTE-010)"
+    )
 
 
 async def test_a_denied_request_leaves_no_response_bytes_anywhere(

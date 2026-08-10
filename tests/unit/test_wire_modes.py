@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 import anyio
@@ -24,13 +25,24 @@ import pytest
 
 from fixtures.build_tree import build
 from fixtures.filesystem_server import modes
-from gateway import startup
+from gateway import router, startup
 from gateway.bridge import upstream
-from gateway.config import ChildConfig
+from gateway.config import ChildConfig, RouterConfig
 from gateway.errors import ReasonCode, RouteDenial
+from tests.helpers.routing import (
+    decision,
+    derived,
+    request,
+)
 
 REPO = Path(__file__).resolve().parents[2]
 RESPONSE = b'{"jsonrpc":"2.0","id":7,"result":{"content":[{"type":"text","text":"ok"}]}}'
+
+# The router's obligation is what must end a dropped response; the guard only exists
+# so a genuine hang fails the run instead of wedging it. Keep them far apart — the
+# gap is what makes "denied by the deadline" distinguishable from "denied by unit 07".
+TIMEOUT_MS = 1_500
+GUARD_S = 30
 
 
 # ===========================================================================
@@ -134,22 +146,45 @@ def wrapped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 @pytest.mark.slow
 @pytest.mark.parametrize("mode", ["malformed", "wrong_id"])
 async def test_a_corrupted_response_is_never_accepted_as_a_result(
-    wrapped, mode: str
+    wrapped, audit_probe, mode: str
 ) -> None:
     """The gateway must not return a result it cannot prove came from this request.
 
-    `malformed` breaks parsing; `wrong_id` breaks correlation while staying perfectly
-    valid JSON. Neither may produce a value the caller could mistake for an answer —
-    a denial is the only acceptable outcome.
+    Both corruptions end as `ROUTE_TIMEOUT`, and that was measured rather than
+    assumed — the first version of this assertion expected `malformed` to kill the
+    session and fail fast. It does not. The SDK discards an unparseable line exactly
+    as silently as a mis-correlated one: a `ValidationError` inside its reader, no
+    message delivered, session still up. So for BOTH modes nothing ever arrives and
+    the only thing that ends the call is unit 07's obligation timeout.
+
+    That makes `ROUTE_TIMEOUT` the single load-bearing defence against every form of
+    corrupted upstream line, which is why this drives `router.forward` rather than
+    `up.call_tool` — the bridge alone bounds nothing.
+
+    Driving the bridge directly is how the earlier version of this test fooled itself.
+    It wrapped an unbounded `call_tool` in `anyio.fail_after(60)`; the deadline
+    cancelled the task, `bridge.upstream`'s `except BaseException` relabelled that
+    cancellation as `ROUTE_UPSTREAM_UNAVAILABLE`, and the assertion — a permissive
+    tuple accepting either code — took it. Both parameters passed after burning a full
+    minute each, and would have passed identically against a gateway that does nothing
+    at all. The two guards against that returning are the exact reason code, and
+    `elapsed`: a denial produced by the outer deadline can no longer satisfy either.
     """
-    with anyio.fail_after(60):
+    req = request()
+    drv = derived(req)
+    dec = decision(req, drv, timeout_ms=TIMEOUT_MS)
+
+    started = time.monotonic()
+    with anyio.fail_after(GUARD_S):
         with pytest.raises(RouteDenial) as caught:
             async with upstream(wrapped(mode)) as up:
-                await up.call_tool("read_file", {"path": "public/documentation.txt"})
+                await router.forward(req, drv, dec, up, RouterConfig())
+    elapsed = time.monotonic() - started
 
-    assert caught.value.reason_code in (
-        ReasonCode.ROUTE_UPSTREAM_UNAVAILABLE,
-        ReasonCode.ROUTE_TIMEOUT,
+    assert caught.value.reason_code is ReasonCode.ROUTE_TIMEOUT
+    assert elapsed < GUARD_S / 2, (
+        f"denied only after {elapsed:.1f}s of a {GUARD_S}s guard — this is the test "
+        "measuring its own deadline, not the gateway refusing the response"
     )
 
 
@@ -161,7 +196,7 @@ async def test_an_unsolicited_message_does_not_displace_the_real_response(
     """S-2. A server-initiated request arriving mid-call must not be mistaken for the
     answer, and must not knock the session over. Unit 08 owns REFUSING it; unit 01
     owns not being confused by it."""
-    with anyio.fail_after(60):
+    with anyio.fail_after(GUARD_S):
         async with upstream(wrapped("unsolicited")) as up:
             result = await up.call_tool("read_file", {"path": "public/documentation.txt"})
 
@@ -177,7 +212,7 @@ async def test_the_wrapper_is_transparent_when_the_target_is_not_hit(wrapped) ->
     Without this, every test above would also pass if the wrapper simply broke the
     connection — which is a different bug wearing the same result.
     """
-    with anyio.fail_after(60):
+    with anyio.fail_after(GUARD_S):
         async with upstream(wrapped("wrong_id")) as up:
             tools = await up.list_tools()  # not a tools/call: must be untouched
 

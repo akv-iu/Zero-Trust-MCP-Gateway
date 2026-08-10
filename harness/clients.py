@@ -32,7 +32,9 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import AsyncGenerator, Generator, Mapping
+import sys
+import time
+from collections.abc import AsyncGenerator, Callable, Generator, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass, replace
 from functools import partial
@@ -112,7 +114,8 @@ class AuditJoin:
     count: int
     request_id: str | None = None
     reason_code: str | None = None
-    outcome: str | None = None
+    stage_latency_ms: dict[str, float] | None = None
+    upstream_latency_ms: float | None = None
 
 
 @dataclass(frozen=True)
@@ -173,11 +176,48 @@ class DirectClient:
 
 @dataclass(frozen=True)
 class Endpoint:
+    key: str
     principal: str
     port: int
     mcp_path: str
     audit_path: Path
     response_timeout_s: float
+    audit_latency_by_request_id: dict[str, float]
+
+
+@dataclass(frozen=True)
+class Deployment:
+    """One process configuration needed by one or more scenario rows.
+
+    The callback exists for the OPA-killed chaos row only.  It runs after every
+    gateway is ready, so startup proves the policy engine was healthy before the
+    harness terminates that real process.
+    """
+
+    key: str
+    principal: str
+    config_path: Path
+    fixture_mode: str = ""
+    on_ready: Callable[[], None] | None = None
+
+
+class _TimedAuditSink:
+    """Measure real durable writes without adding benchmark fields to audit schema."""
+
+    def __init__(self, sink: Any, timings: dict[str, float]) -> None:
+        self._sink = sink
+        self._timings = timings
+
+    async def write(self, event: Any) -> None:
+        started = time.perf_counter_ns()
+        try:
+            await self._sink.write(event)
+        finally:
+            request_id = getattr(event, "request_id", None)
+            if request_id is not None:
+                elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000
+                key = str(request_id)
+                self._timings[key] = self._timings.get(key, 0.0) + elapsed_ms
 
 
 class _AuditTail:
@@ -236,25 +276,65 @@ class ProtectedClient:
 
     @property
     def principals(self) -> tuple[str, ...]:
-        return tuple(sorted(self._endpoints))
+        return tuple(
+            sorted({endpoint.principal for endpoint in self._endpoints.values()})
+        )
+
+    def supports(self, scenario: Scenario) -> bool:
+        return scenario.deployment_key in self._endpoints
+
+    @property
+    def audit_paths(self) -> tuple[Path, ...]:
+        return tuple(
+            sorted({endpoint.audit_path for endpoint in self._endpoints.values()})
+        )
+
+    @property
+    def audit_latency_by_request_id(self) -> dict[str, float]:
+        timings: dict[str, float] = {}
+        for endpoint in self._endpoints.values():
+            duplicate = timings.keys() & endpoint.audit_latency_by_request_id.keys()
+            if duplicate:
+                raise RuntimeError(
+                    f"duplicate timed audit request ids: {sorted(duplicate)}"
+                )
+            timings.update(endpoint.audit_latency_by_request_id)
+        return timings
 
     def call(self, scenario: Scenario) -> CallOutcome:
-        endpoint = self._endpoints.get(scenario.principal)
+        endpoint = self._endpoint(scenario)
+        # Drained BEFORE the call, so anything left over from a previous row cannot be
+        # attributed to this one. Positional correlation is only exact if the window
+        # starts empty.
+        tail = self._tails[endpoint.key]
+        tail.take()
+        outcome = self._send(scenario, endpoint)
+        return _with_audit(outcome, _join(tail.take()))
+
+    def call_unjoined(self, scenario: Scenario) -> CallOutcome:
+        """Performance-only call safe under concurrency; stages are joined later.
+
+        Positional audit tails cannot correlate concurrent requests.  The benchmark
+        does not score side effects, so it sends concurrently and reads aggregate
+        stage distributions from the audit files after the run instead.
+        """
+        return self._send(scenario, self._endpoint(scenario))
+
+    def _endpoint(self, scenario: Scenario) -> Endpoint:
+        endpoint = self._endpoints.get(scenario.deployment_key)
         if endpoint is None:
             # Loud, and not a denial: a corpus row naming a principal no gateway was
             # started for is a harness configuration error. Scoring it as `deny` would
             # let a typo in the corpus read as the gateway defending something.
             raise KeyError(
                 f"{scenario.id}: no gateway configured for principal "
-                f"{scenario.principal!r}; started: {self.principals}"
+                f"{scenario.principal!r} with deployment "
+                f"{scenario.deployment_key!r}; started: {tuple(sorted(self._endpoints))}"
             )
 
-        # Drained BEFORE the call, so anything left over from a previous row cannot be
-        # attributed to this one. Positional correlation is only exact if the window
-        # starts empty.
-        tail = self._tails[scenario.principal]
-        tail.take()
+        return endpoint
 
+    def _send(self, scenario: Scenario, endpoint: Endpoint) -> CallOutcome:
         env = build_envelope(scenario)
         response = self._portal.call(
             partial(
@@ -266,8 +346,7 @@ class ProtectedClient:
                 timeout_s=endpoint.response_timeout_s,
             )
         )
-        outcome = _outcome(response, _sent_jsonrpc_id(env.body))
-        return replace(outcome, audit=_join(tail.take()))
+        return _outcome(response, _sent_jsonrpc_id(env.body))
 
 
 def _outcome(response: Response, sent_id: Any) -> CallOutcome:
@@ -362,10 +441,12 @@ def _malformed(body: dict[str, Any], status: int, sent_id: Any) -> str | None:
             error.get("message"), str
         ):
             return f"error object is malformed: {error!r}"
-        if not 400 <= status < 500:
-            # `wire_shape` maps every ReasonCode to a 4xx. A JSON-RPC error under any
-            # other status means the two layers disagree about what happened.
+        if not 400 <= status < 600:
+            # `wire_shape` maps denials across the HTTP error range: ordinary
+            # refusals use 4xx, while timeouts/unavailability use 504/503.
             return f"JSON-RPC error returned under HTTP {status}"
+        if sent_id is not _UNKNOWN_ID and body["id"] != sent_id:
+            return f"error id {body['id']!r} does not match the request id {sent_id!r}"
         return None
 
     if status != 200:
@@ -396,6 +477,30 @@ def _sent_jsonrpc_id(body: bytes) -> Any:
     return cast("dict[str, Any]", parsed)["id"]
 
 
+def _with_audit(outcome: CallOutcome, join: AuditJoin) -> CallOutcome:
+    """Attach the join, and take the ALLOW-side reason code from it.
+
+    A JSON-RPC success carries no reason code and must not: the client is told what it
+    may know, and inventing a field on the wire to make scoring easier would change the
+    client-facing contract to suit the harness. But `expected_reason` is mandatory on
+    every corpus row including the legitimate ones (HARN-003), so an allow scored
+    against the wire alone compares `POLICY_SCOPED_READ` to `None` and fails all 21
+    legitimate rows.
+
+    The gateway does record why it allowed — in the audit event, which HARN-009 already
+    requires be joined to this call. So the allow-side code is read from there, and only
+    when the wire genuinely carries none.
+
+    This does NOT weaken the deny path. A denial's code still comes from the wire, and
+    `runner._audit_problem` still fails a row whose record disagrees with what the
+    client was told — the cross-check that would otherwise be lost by filling one side
+    from the other.
+    """
+    if outcome.decision == "allow" and outcome.reason_code is None:
+        return replace(outcome, reason_code=join.reason_code, audit=join)
+    return replace(outcome, audit=join)
+
+
 def _join(events: list[Any]) -> AuditJoin:
     """HARN-009's join, from the events this one call appended.
 
@@ -411,7 +516,8 @@ def _join(events: list[Any]) -> AuditJoin:
         count=1,
         request_id=getattr(event, "request_id", None),
         reason_code=getattr(event, "reason_code", None),
-        outcome=getattr(event, "outcome", None),
+        stage_latency_ms=dict(getattr(event, "stage_latency_ms", {})),
+        upstream_latency_ms=getattr(event, "upstream_latency_ms", None),
     )
 
 
@@ -422,7 +528,11 @@ def _obj(value: Any) -> dict[str, Any]:
 
 
 @contextmanager
-def protected(configs: Mapping[str, Path]) -> Generator[ProtectedClient]:
+def protected(
+    configs: Mapping[str, Path | Deployment],
+    *,
+    performance: bool = False,
+) -> Generator[ProtectedClient]:
     """Bring up one gateway per principal and yield a client that dispatches to them.
 
     Synchronous on the outside because `Client.call` is, and `Client.call` is because
@@ -436,13 +546,19 @@ def protected(configs: Mapping[str, Path]) -> Generator[ProtectedClient]:
     """
     with (
         start_blocking_portal() as portal,
-        portal.wrap_async_context_manager(_gateways(configs)) as endpoints,
+        portal.wrap_async_context_manager(
+            _gateways(configs, performance=performance)
+        ) as endpoints,
     ):
         yield ProtectedClient(portal, endpoints)
 
 
 @asynccontextmanager
-async def _gateways(configs: Mapping[str, Path]) -> AsyncGenerator[dict[str, Endpoint]]:
+async def _gateways(
+    configs: Mapping[str, Path | Deployment],
+    *,
+    performance: bool = False,
+) -> AsyncGenerator[dict[str, Endpoint]]:
     """Enter every `startup.serve`, then serve them all from one task group.
 
     ORDER IS LOAD-BEARING. The serve contexts are entered FIRST and the task group
@@ -461,16 +577,51 @@ async def _gateways(configs: Mapping[str, Path]) -> AsyncGenerator[dict[str, End
         endpoints: dict[str, Endpoint] = {}
         servers: list[uvicorn.Server] = []
 
-        for principal, config_path in configs.items():
+        callbacks: list[Callable[[], None]] = []
+        for key, configured in configs.items():
+            deployment = (
+                configured
+                if isinstance(configured, Deployment)
+                else Deployment(key, key, Path(configured))
+            )
+            principal = deployment.principal
+            config_path = deployment.config_path
             # The oracle correlates by byte offset into one shared operation log, which
             # is only valid while upstream calls are serialised. Checked BEFORE the
             # child is spawned — `load_all` validates without launching anything — so a
             # bad config fails with its own message instead of surfacing as a nested
             # ExceptionGroup wrapped in ROUTE_UPSTREAM_UNAVAILABLE from the teardown.
             cfg, _ = startup.load_all(config_path)
-            assert_serialised(cfg.edge.max_concurrent_requests)
-            deps = await stack.enter_async_context(startup.serve(config_path))
-            endpoints[principal] = Endpoint(
+            if not performance:
+                assert_serialised(cfg.edge.max_concurrent_requests)
+
+            old_mode = os.environ.get("FIXTURE_MODE")
+            old_oversized_bytes = os.environ.get("FIXTURE_OVERSIZED_BYTES")
+            os.environ["FIXTURE_MODE"] = deployment.fixture_mode
+            if deployment.fixture_mode == "oversized":
+                # The fixture's 100 MiB default exceeds the R1 route deadline on
+                # ordinary hosts. 1.1 MB is still over the live one-MiB response
+                # obligation, while reaching unit 08 before the router times out.
+                os.environ["FIXTURE_OVERSIZED_BYTES"] = "1100000"
+            try:
+                deps = await stack.enter_async_context(startup.serve(config_path))
+            finally:
+                if old_mode is None:
+                    os.environ.pop("FIXTURE_MODE", None)
+                else:
+                    os.environ["FIXTURE_MODE"] = old_mode
+                if old_oversized_bytes is None:
+                    os.environ.pop("FIXTURE_OVERSIZED_BYTES", None)
+                else:
+                    os.environ["FIXTURE_OVERSIZED_BYTES"] = old_oversized_bytes
+
+            audit_timings: dict[str, float] = {}
+            timed_deps = replace(
+                deps,
+                audit=cast("Any", _TimedAuditSink(deps.audit, audit_timings)),
+            )
+            endpoints[key] = Endpoint(
+                key=key,
                 principal=principal,
                 port=deps.config.edge.port,
                 mcp_path=deps.config.edge.mcp_path,
@@ -483,11 +634,14 @@ async def _gateways(configs: Mapping[str, Path]) -> AsyncGenerator[dict[str, End
                 response_timeout_s=(
                     deps.config.edge.request_timeout_s * HANDLER_BACKSTOP + 15.0
                 ),
+                audit_latency_by_request_id=audit_timings,
             )
+            if deployment.on_ready is not None:
+                callbacks.append(deployment.on_ready)
             servers.append(
                 uvicorn.Server(
                     uvicorn.Config(
-                        build_app(deps.config.edge, partial(handle, deps=deps)),
+                        build_app(deps.config.edge, partial(handle, deps=timed_deps)),
                         host=deps.config.edge.host,
                         port=deps.config.edge.port,
                         log_level="error",  # access logs would echo paths into stderr
@@ -503,6 +657,13 @@ async def _gateways(configs: Mapping[str, Path]) -> AsyncGenerator[dict[str, End
             for server in servers:
                 while not getattr(server, "started", False):
                     await anyio.sleep(0.05)
+
+        seen_callbacks: set[int] = set()
+        for callback in callbacks:
+            identity = id(callback)
+            if identity not in seen_callbacks:
+                callback()
+                seen_callbacks.add(identity)
 
         try:
             yield endpoints
@@ -521,6 +682,7 @@ def write_configs(
     work: Path,
     fixture_root: Path,
     opa_url: str,
+    max_concurrent: int = 1,
 ) -> dict[str, Path]:
     """One gateway config per principal, all derived from the SHIPPED config.
 
@@ -539,15 +701,13 @@ def write_configs(
     to scenarios by byte offset into a single operation log, which two in-flight calls
     would interleave. `assert_serialised` refuses to start a gateway without it.
     """
-    text = source.read_text("utf-8")
-    posix = str(fixture_root).replace("\\", "/")
-    text = text.replace('base = "var/fixture"', f"base = {json.dumps(str(fixture_root))}")
-    text = text.replace('path = "var/fixture/', f'path = "{posix}/')
-    text = text.replace("http://127.0.0.1:8181", opa_url)
+    text = _base_config(source, fixture_root, opa_url)
 
     out: dict[str, Path] = {}
     for principal in principals:
         audit = work / f"audit-{principal}.jsonl"
+        registry = work / f"registry-{principal}.toml"
+        registry.write_text(_registry_text(source, ""), encoding="utf-8")
         # Per-principal audit files. One shared file would have three `AuditSink`
         # handles appending to it from one process, and interleaved partial lines are
         # exactly the corruption the completeness ratio exists to detect — a harness
@@ -557,14 +717,123 @@ def write_configs(
                 'principal = "developer"', f"principal = {json.dumps(principal)}"
             )
             .replace('roles = ["developer"]', f"roles = [{json.dumps(principal)}]")
+            .replace(
+                'registry_path = "config/registry.toml"',
+                f"registry_path = {json.dumps(str(registry))}",
+            )
             .replace("port = 8080", f"port = {free_port()}")
-            .replace("max_concurrent_requests = 4", "max_concurrent_requests = 1")
+            .replace(
+                "max_concurrent_requests = 4",
+                f"max_concurrent_requests = {max_concurrent}",
+            )
             .replace('path = "var/audit.jsonl"', f"path = {json.dumps(str(audit))}")
         )
         path = work / f"gateway-{principal}.toml"
         path.write_text(body, encoding="utf-8")
         out[principal] = path
     return out
+
+
+def write_deployments(
+    scenarios: tuple[Scenario, ...],
+    *,
+    source: Path,
+    work: Path,
+    fixture_root: Path,
+    opa_url: str,
+    killed_opa_url: str | None = None,
+    on_opa_ready: Callable[[], None] | None = None,
+) -> dict[str, Deployment]:
+    """Build only the distinct process variants required by ``scenarios``.
+
+    A hundred rows still need only one normal gateway per principal plus one gateway
+    per requested fault mode.  Starting per row would add process churn without
+    strengthening the observation; sharing a variant is safe because ``run_corpus``
+    remains strictly serial and resets the fixture after every row.
+    """
+    chosen: dict[str, Scenario] = {}
+    for scenario in scenarios:
+        chosen.setdefault(scenario.deployment_key, scenario)
+
+    deployments: dict[str, Deployment] = {}
+    for key, scenario in chosen.items():
+        slug = "".join(ch if ch.isalnum() else "-" for ch in key).strip("-")
+        variant_opa = (
+            killed_opa_url if scenario.gateway_fault == "opa_killed" else opa_url
+        )
+        if variant_opa is None:
+            raise ValueError("opa_killed scenario requires killed_opa_url")
+
+        registry = work / f"registry-{slug}.toml"
+        registry.write_text(
+            _registry_text(source, scenario.fixture_mode), encoding="utf-8"
+        )
+        audit = work / f"audit-{slug}.jsonl"
+        body = (
+            _base_config(source, fixture_root, variant_opa)
+            .replace(
+                'registry_path = "config/registry.toml"',
+                f"registry_path = {json.dumps(str(registry))}",
+            )
+            .replace(
+                'principal = "developer"',
+                f"principal = {json.dumps(scenario.principal)}",
+            )
+            .replace(
+                'roles = ["developer"]',
+                f"roles = [{json.dumps(scenario.principal)}]",
+            )
+            .replace("port = 8080", f"port = {free_port()}")
+            .replace("max_concurrent_requests = 4", "max_concurrent_requests = 1")
+            .replace('path = "var/audit.jsonl"', f"path = {json.dumps(str(audit))}")
+        )
+        if scenario.gateway_fault == "opa_killed":
+            # A refused connection should be named POLICY_UNAVAILABLE, not race the
+            # 500 ms timeout and become POLICY_TIMEOUT on a busy Windows host.
+            body = body.replace("timeout_ms = 500", "timeout_ms = 5000")
+
+        path = work / f"gateway-{slug}.toml"
+        path.write_text(body, encoding="utf-8")
+        deployments[key] = Deployment(
+            key=key,
+            principal=scenario.principal,
+            config_path=path,
+            fixture_mode=scenario.fixture_mode,
+            on_ready=(on_opa_ready if scenario.gateway_fault == "opa_killed" else None),
+        )
+    return deployments
+
+
+def _base_config(source: Path, fixture_root: Path, opa_url: str) -> str:
+    text = source.read_text("utf-8")
+    posix = str(fixture_root).replace("\\", "/")
+    return (
+        text.replace('base = "var/fixture"', f"base = {json.dumps(str(fixture_root))}")
+        .replace('path = "var/fixture/', f'path = "{posix}/')
+        .replace("http://127.0.0.1:8181", opa_url)
+    )
+
+
+def _registry_text(source: Path, fixture_mode: str) -> str:
+    """A launcher-stable registry, with the wire wrapper selected when required."""
+    registry_source = source.with_name("registry.toml")
+    text = registry_source.read_text("utf-8")
+    repo = source.resolve().parent.parent
+    text = text.replace(
+        'executable = "python"', f"executable = {json.dumps(sys.executable)}"
+    )
+    text = text.replace('cwd = "."', f"cwd = {json.dumps(str(repo))}")
+    if fixture_mode == "oversized":
+        text = text.replace(
+            '"FIXTURE_ROOT", "FIXTURE_OPLOG", "FIXTURE_MODE",',
+            '"FIXTURE_ROOT", "FIXTURE_OPLOG", "FIXTURE_MODE", "FIXTURE_OVERSIZED_BYTES",',
+        )
+    if fixture_mode in {"malformed", "wrong_id", "unsolicited", "pathological"}:
+        text = text.replace(
+            'args = ["-m", "fixtures.filesystem_server.server"]',
+            'args = ["-m", "fixtures.misbehaving_wrapper"]',
+        )
+    return text
 
 
 __all__ = [
@@ -574,8 +843,10 @@ __all__ = [
     "CallOutcome",
     "Client",
     "DirectClient",
+    "Deployment",
     "Endpoint",
     "ProtectedClient",
     "protected",
     "write_configs",
+    "write_deployments",
 ]

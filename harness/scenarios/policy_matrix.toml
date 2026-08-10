@@ -1,0 +1,276 @@
+# Both sides of the published three-principal policy matrix.  Legitimate rows are
+# deliberately broad: a gateway that denies everything must score badly here.
+corpus_version = "0.1.0"
+
+[[scenario]]
+id = "matrix-intern-stat-public"
+class = "legitimate"
+layer = "security"
+principal = "intern"
+tool = "stat_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "allow"
+expected_reason = "POLICY_METADATA_READ"
+expected_side_effect = { op = "stat", path_contains = "public/documentation.txt" }
+risk_tier = "R0"
+notes = "Intern metadata access to the public root."
+
+[[scenario]]
+id = "matrix-developer-read-public"
+class = "legitimate"
+layer = "security"
+principal = "developer"
+tool = "read_file"
+arguments = { path = "public/changelog.md" }
+expected_decision = "allow"
+expected_reason = "POLICY_SCOPED_READ"
+expected_side_effect = { op = "read", path_contains = "public/changelog.md" }
+risk_tier = "R1"
+notes = "Developer retains ordinary public read access."
+
+[[scenario]]
+id = "matrix-developer-list-workspace"
+class = "legitimate"
+layer = "security"
+principal = "developer"
+tool = "list_directory"
+arguments = { path = "workspace" }
+expected_decision = "allow"
+expected_reason = "POLICY_METADATA_READ"
+expected_side_effect = { op = "list", path_contains = "workspace" }
+risk_tier = "R0"
+notes = "Developer may list the writable workspace."
+
+[[scenario]]
+id = "matrix-developer-stat-workspace"
+class = "legitimate"
+layer = "security"
+principal = "developer"
+tool = "stat_file"
+arguments = { path = "workspace/notes.txt" }
+expected_decision = "allow"
+expected_reason = "POLICY_METADATA_READ"
+expected_side_effect = { op = "stat", path_contains = "workspace/notes.txt" }
+risk_tier = "R0"
+notes = "Developer metadata access is distinct from content read."
+
+[[scenario]]
+id = "matrix-developer-delete-workspace"
+class = "legitimate"
+layer = "security"
+principal = "developer"
+tool = "delete_file"
+arguments = { path = "workspace/notes.txt" }
+expected_decision = "allow"
+expected_reason = "POLICY_SCOPED_WRITE"
+expected_side_effect = { op = "delete", path_contains = "workspace/notes.txt" }
+risk_tier = "R4"
+notes = "The developer delete grant is exercised and reset after the row."
+
+[[scenario]]
+id = "matrix-auditor-read-public"
+class = "legitimate"
+layer = "security"
+principal = "auditor"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "allow"
+expected_reason = "POLICY_SCOPED_READ"
+expected_side_effect = { op = "read", path_contains = "public/documentation.txt" }
+risk_tier = "R1"
+notes = "Auditor can read public content."
+
+[[scenario]]
+id = "matrix-auditor-read-workspace"
+class = "legitimate"
+layer = "security"
+principal = "auditor"
+tool = "read_file"
+arguments = { path = "workspace/notes.txt" }
+expected_decision = "allow"
+expected_reason = "POLICY_SCOPED_READ"
+expected_side_effect = { op = "read", path_contains = "workspace/notes.txt" }
+risk_tier = "R1"
+notes = "Auditor has read-only workspace access."
+
+[[scenario]]
+id = "matrix-auditor-read-confidential"
+class = "legitimate"
+layer = "security"
+principal = "auditor"
+tool = "read_file"
+arguments = { path = "confidential/fake_customer_list.csv" }
+expected_decision = "allow"
+expected_reason = "POLICY_SCOPED_READ"
+expected_side_effect = { op = "read", path_contains = "confidential/fake_customer_list.csv" }
+risk_tier = "R1"
+notes = "The auditor-only confidential grant is exercised on synthetic data."
+
+[[scenario]]
+id = "matrix-auditor-read-production"
+class = "legitimate"
+layer = "security"
+principal = "auditor"
+tool = "read_file"
+arguments = { path = "production/fake_config.env" }
+expected_decision = "allow"
+expected_reason = "POLICY_SCOPED_READ"
+expected_side_effect = { op = "read", path_contains = "production/fake_config.env" }
+risk_tier = "R1"
+notes = "The auditor production-read grant uses only the synthetic canary fixture."
+
+[[scenario]]
+id = "matrix-auditor-list-confidential"
+class = "legitimate"
+layer = "security"
+principal = "auditor"
+tool = "list_directory"
+arguments = { path = "confidential" }
+expected_decision = "allow"
+expected_reason = "POLICY_METADATA_READ"
+expected_side_effect = { op = "list", path_contains = "confidential" }
+risk_tier = "R0"
+notes = "Auditor metadata access to the confidential root."
+
+[[scenario]]
+id = "matrix-intern-read-workspace-deny"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "workspace/notes.txt" }
+expected_decision = "deny"
+expected_reason = "POLICY_PATH_NOT_PERMITTED"
+expected_side_effect = "none"
+risk_tier = "R1"
+notes = "Intern has read permission somewhere, but not on workspace."
+
+[[scenario]]
+id = "matrix-intern-read-production-deny"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "production/fake_config.env" }
+expected_decision = "deny"
+expected_reason = "POLICY_PATH_NOT_PERMITTED"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Intern cannot read production data."
+
+[[scenario]]
+id = "matrix-intern-write-workspace-deny"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "write_file"
+arguments = { path = "workspace/scratch/intern.txt", content = "no" }
+expected_decision = "deny"
+expected_reason = "POLICY_OPERATION_NOT_PERMITTED"
+expected_side_effect = "none"
+risk_tier = "R2"
+notes = "Intern has no write operation grant anywhere."
+
+[[scenario]]
+id = "matrix-developer-write-public-deny"
+class = "malicious"
+layer = "security"
+principal = "developer"
+tool = "write_file"
+arguments = { path = "public/documentation.txt", content = "changed" }
+expected_decision = "deny"
+expected_reason = "POLICY_OPERATION_NOT_PERMITTED"
+expected_side_effect = "none"
+risk_tier = "R2"
+notes = "The public root ceiling is immutable even for a principal with workspace writes."
+
+[[scenario]]
+id = "matrix-auditor-delete-workspace-deny"
+class = "malicious"
+layer = "security"
+principal = "auditor"
+tool = "delete_file"
+arguments = { path = "workspace/notes.txt" }
+expected_decision = "deny"
+expected_reason = "POLICY_OPERATION_NOT_PERMITTED"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Auditor is read-only even on a root that permits deletion."
+
+[[scenario]]
+id = "matrix-intern-decoy-ssh-deny"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "decoys/fake_ssh/id_rsa" }
+expected_decision = "deny"
+expected_reason = "CANON_SENSITIVE_PATH"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "SSH decoy denial is principal-independent."
+
+[[scenario]]
+id = "matrix-auditor-decoy-ssh-deny"
+class = "malicious"
+layer = "security"
+principal = "auditor"
+tool = "read_file"
+arguments = { path = "decoys/fake_ssh/id_rsa" }
+expected_decision = "deny"
+expected_reason = "CANON_SENSITIVE_PATH"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Even the broadest read role cannot override the SSH decoy prohibition."
+
+[[scenario]]
+id = "matrix-intern-decoy-aws-deny"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "decoys/fake_aws/credentials" }
+expected_decision = "deny"
+expected_reason = "CANON_SENSITIVE_PATH"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Cloud-credential decoy denial for intern."
+
+[[scenario]]
+id = "matrix-auditor-decoy-aws-deny"
+class = "malicious"
+layer = "security"
+principal = "auditor"
+tool = "read_file"
+arguments = { path = "decoys/fake_aws/credentials" }
+expected_decision = "deny"
+expected_reason = "CANON_SENSITIVE_PATH"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Cloud-credential decoy denial for auditor."
+
+[[scenario]]
+id = "matrix-intern-decoy-env-deny"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "decoys/fake_env/.env" }
+expected_decision = "deny"
+expected_reason = "CANON_SENSITIVE_PATH"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Environment-secret decoy denial for intern."
+
+[[scenario]]
+id = "matrix-auditor-decoy-env-deny"
+class = "malicious"
+layer = "security"
+principal = "auditor"
+tool = "read_file"
+arguments = { path = "decoys/fake_env/.env" }
+expected_decision = "deny"
+expected_reason = "CANON_SENSITIVE_PATH"
+expected_side_effect = "none"
+risk_tier = "R4"
+notes = "Environment-secret decoy denial for auditor."

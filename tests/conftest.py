@@ -21,6 +21,24 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Everything under `tests/integration/` is `slow` by definition.
+
+    The marker existed but had been applied by hand to five tests, so
+    `-m "not slow"` — the fast lane the review gate tells you to iterate on — saved
+    twelve seconds out of three minutes. A marker that has to be remembered is a
+    marker that stops being true, and this one had.
+
+    Directory rather than per-test, because "integration" already means "spawns a
+    gateway, a child, or OPA". Expensive UNIT tests still need the explicit marker:
+    they sit beside fast ones in the same module, so nothing structural distinguishes
+    them.
+    """
+    for item in items:
+        if "integration" in item.path.parts:
+            item.add_marker(pytest.mark.slow)
+
+
 # ===========================================================================
 # IDENT-002 / spec-03 test 2 — the gateway never claims verified identity
 # ===========================================================================

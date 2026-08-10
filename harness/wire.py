@@ -24,7 +24,7 @@ import socket
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import anyio
 from mcp.shared.inbound import NAME_BEARING_METHODS, encode_header_value
@@ -66,7 +66,16 @@ def build_envelope(
         "arguments": dict(scenario.arguments),
         **t.body_extra,
     }
-    body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    body = {
+        "jsonrpc": "2.0",
+        "id": t.jsonrpc_id,
+        "method": method,
+        "params": params,
+    }
+    if t.boundary is not None:
+        _add_boundary_probe(
+            body, t.boundary, cast("int", t.boundary_value) + t.boundary_offset
+        )
     raw = t.raw_body.encode() if t.raw_body is not None else json.dumps(body).encode()
 
     name_key = NAME_BEARING_METHODS.get(t.header_method or method)
@@ -86,6 +95,45 @@ def build_envelope(
         body=raw,
         metadata=tuple(pairs),
     )
+
+
+def _add_boundary_probe(body: dict[str, Any], kind: str, target: int) -> None:
+    """Materialize a structural boundary without committing megabytes of TOML."""
+    params = cast("dict[str, Any]", body["params"])
+    arguments = cast("dict[str, Any]", params["arguments"])
+    if kind == "depth":
+        # body=1, params=2, arguments=3, probe=4.
+        probe: Any = {}
+        for _ in range(max(0, target - 4)):
+            probe = {"n": probe}
+        arguments["probe"] = probe
+    elif kind == "array":
+        arguments["probe"] = [0] * target
+    elif kind == "string":
+        arguments["probe"] = "x" * target
+    elif kind == "object":
+        arguments["probe"] = {f"k{i}": 0 for i in range(target)}
+    elif kind == "fields":
+        arguments["probe"] = []
+        remaining = target - _field_count(body)
+        if remaining < 0:
+            raise ValueError("total-field boundary is smaller than the request envelope")
+        probe_list = cast("list[Any]", arguments["probe"])
+        while remaining > 0:
+            width = min(500, remaining)
+            probe_list.append({f"k{i}": 0 for i in range(width)})
+            remaining -= width
+    else:  # pragma: no cover - pydantic closes the vocabulary
+        raise ValueError(f"unknown boundary kind: {kind}")
+
+
+def _field_count(value: Any) -> int:
+    if isinstance(value, dict):
+        obj = cast("dict[str, Any]", value)
+        return len(obj) + sum(_field_count(item) for item in obj.values())
+    if isinstance(value, list):
+        return sum(_field_count(item) for item in cast("list[Any]", value))
+    return 0
 
 
 # -- onto the socket -------------------------------------------------------

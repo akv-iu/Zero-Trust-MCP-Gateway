@@ -1,0 +1,157 @@
+# Upstream and policy failures.  Each row selects a real deployment variant; none of
+# these outcomes is produced by a stubbed client.
+corpus_version = "0.1.0"
+
+[[scenario]]
+id = "resp-oversized-001"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "RESP_TOO_LARGE"
+expected_side_effect = { op = "read", path_contains = "public/documentation.txt" }
+risk_tier = "R1"
+fixture_mode = "oversized"
+notes = "The authorized read occurs, then a harness-bounded 1.1 MB result exceeds the live 1 MiB obligation and is rejected rather than truncated into success; the fixture default remains 100 MiB."
+
+[[scenario]]
+id = "resp-pathological-001"
+class = "malicious"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/changelog.md" }
+expected_decision = "deny"
+expected_reason = "RESP_LIMIT_EXCEEDED"
+expected_side_effect = { op = "read", path_contains = "public/changelog.md" }
+risk_tier = "R1"
+fixture_mode = "pathological"
+notes = "A response deeper and wider than the configured structure limits is rejected after the legitimate read."
+
+[[scenario]]
+id = "resp-malformed-001"
+class = "malicious"
+layer = "chaos"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "ROUTE_TIMEOUT"
+expected_side_effect = { op = "read", path_contains = "public/documentation.txt" }
+risk_tier = "R1"
+fixture_mode = "malformed"
+notes = "The fixture completes the read but emits truncated JSON; the pinned SDK drops it and the bounded route times out."
+
+[[scenario]]
+id = "resp-wrong-id-001"
+class = "malicious"
+layer = "chaos"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/changelog.md" }
+expected_decision = "deny"
+expected_reason = "ROUTE_TIMEOUT"
+expected_side_effect = { op = "read", path_contains = "public/changelog.md" }
+risk_tier = "R1"
+fixture_mode = "wrong_id"
+notes = "The SDK refuses to correlate a valid response carrying a foreign id; the client never receives it as success."
+
+[[scenario]]
+id = "resp-unsolicited-001"
+class = "legitimate"
+layer = "chaos"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "allow"
+expected_reason = "POLICY_SCOPED_READ"
+expected_side_effect = { op = "read", path_contains = "public/documentation.txt" }
+risk_tier = "R1"
+fixture_mode = "unsolicited"
+notes = "An unsolicited roots/list request is refused and audited without displacing the legitimate tool result."
+
+[[scenario]]
+id = "resp-injection-data-001"
+class = "legitimate"
+layer = "security"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "allow"
+expected_reason = "POLICY_SCOPED_READ"
+expected_side_effect = { op = "read", path_contains = "public/documentation.txt" }
+risk_tier = "R1"
+fixture_mode = "inject"
+notes = "Instruction-shaped tool text remains untrusted result data and cannot trigger a second gateway action."
+
+[[scenario]]
+id = "chaos-upstream-hang-001"
+class = "malicious"
+layer = "chaos"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "ROUTE_TIMEOUT"
+expected_side_effect = "none"
+risk_tier = "R1"
+fixture_mode = "hang"
+notes = "A tool that never returns is bounded by the route obligation and is not retried."
+
+[[scenario]]
+id = "chaos-upstream-crash-001"
+class = "malicious"
+layer = "chaos"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "ROUTE_UPSTREAM_UNAVAILABLE"
+expected_side_effect = "none"
+risk_tier = "R1"
+fixture_mode = "crash"
+notes = "A child that exits at call time becomes a controlled denial, never a restart-and-success."
+
+[[scenario]]
+id = "reg-drift-live-001"
+class = "malicious"
+layer = "chaos"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "REG_TOOL_QUARANTINED"
+expected_side_effect = "none"
+risk_tier = "R1"
+fixture_mode = "drift"
+notes = "A live startup handshake detects changed tool metadata and quarantines read_file before this request."
+
+[[scenario]]
+id = "reg-poison-live-001"
+class = "malicious"
+layer = "chaos"
+principal = "developer"
+tool = "delete_file"
+arguments = { path = "workspace/notes.txt" }
+expected_decision = "deny"
+expected_reason = "REG_TOOL_QUARANTINED"
+expected_side_effect = "none"
+risk_tier = "R4"
+fixture_mode = "poison"
+notes = "A destructive tool advertising itself as read-only changes its fingerprint and is quarantined."
+
+[[scenario]]
+id = "chaos-opa-killed-001"
+class = "malicious"
+layer = "chaos"
+principal = "intern"
+tool = "read_file"
+arguments = { path = "public/documentation.txt" }
+expected_decision = "deny"
+expected_reason = "POLICY_UNAVAILABLE"
+expected_side_effect = "none"
+risk_tier = "R1"
+gateway_fault = "opa_killed"
+notes = "A dedicated real OPA is healthy at gateway startup and terminated before this call; policy fails closed."

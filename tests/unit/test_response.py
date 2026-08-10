@@ -44,13 +44,25 @@ def request(method: str = "tools/call") -> CanonicalRequest:
     )
 
 
-def result(content: Any, *, is_error: bool = False, size: int | None = None) -> RawResult:
-    """A `RawResult` as unit 07 builds one — `byte_count` over the canonical JSON."""
+def result(
+    content: Any,
+    *,
+    is_error: bool = False,
+    size: int | None = None,
+    ob: Obligations | None = None,
+) -> RawResult:
+    """A `RawResult` as unit 07 builds one — `byte_count` over the canonical JSON.
+
+    Carries the obligations unit 07 actually enforced, because unit 08 now reads the
+    ceiling off the result instead of being handed one. That is the fix for a real
+    defect: the two used to be separate and production passed the UNCLAMPED value.
+    """
     return RawResult(
         content=content,
         is_error=is_error,
         byte_count=len(canonical_json(content)) if size is None else size,
         upstream_latency_ns=1_000,
+        obligations=ob or OB,
     )
 
 
@@ -58,9 +70,14 @@ def ok_content(text: str = "hello") -> dict[str, Any]:
     return {"content": [{"type": "text", "text": text}], "isError": False}
 
 
-def denied(raw: RawResult, req: CanonicalRequest | None = None, **kw: Any) -> ReasonCode:
+def denied(
+    raw: RawResult, req: CanonicalRequest | None = None, *, cfg: ResponseConfig = CFG
+) -> ReasonCode:
+    """Keyword-only and CLOSED. It used to take `**kw` and read `cfg` out of it, so a
+    caller passing `ob=` — which validate no longer accepts, because the obligation
+    rides on the result now — was silently ignored and the test asserted nothing."""
     with pytest.raises(ResponseDenial) as exc:
-        response.validate(raw, req or request(), kw.get("ob", OB), kw.get("cfg", CFG))
+        response.validate(raw, req or request(), cfg)
     return exc.value.reason_code
 
 
@@ -78,7 +95,7 @@ def test_1_a_valid_response_is_delivered_byte_for_byte_and_labelled() -> None:
     not rewriting — and the wrapping is itself required (RESP-001); see below.
     """
     content = ok_content("Public documentation.\n")
-    out = response.validate(result(content), request(), OB, CFG)
+    out = response.validate(result(content), request(), CFG)
 
     assert isinstance(out, Untrusted)
     assert canonical_json(out.unwrap()["result"]) == canonical_json(content)
@@ -97,7 +114,7 @@ def test_1c_the_reply_is_a_valid_jsonrpc_response() -> None:
     because a unit test of this function alone would keep passing either way.
     """
     req = request()
-    out = response.validate(result(ok_content()), req, OB, CFG).unwrap()
+    out = response.validate(result(ok_content()), req, CFG).unwrap()
 
     assert out["jsonrpc"] == "2.0"
     assert out["id"] == req.jsonrpc_id
@@ -109,7 +126,7 @@ def test_1b_the_label_is_the_type_not_a_flag() -> None:
     """RESP-005. `__str__` raising is the whole mechanism: an f-string, a log line or
     a prompt template that touches tool output without unwrapping fails loudly at the
     point of the mistake instead of interpolating attacker text."""
-    out = response.validate(result(ok_content()), request(), OB, CFG)
+    out = response.validate(result(ok_content()), request(), CFG)
     with pytest.raises(TypeError):
         f"{out}"  # noqa: B018
     with pytest.raises(TypeError):
@@ -217,9 +234,9 @@ def test_4_one_byte_under_passes_and_one_byte_over_is_refused() -> None:
     ob = Obligations(timeout_ms=3000, max_response_bytes=100)
     content = ok_content()
 
-    assert response.validate(result(content, size=99), request(), ob, CFG)
-    assert response.validate(result(content, size=100), request(), ob, CFG)
-    assert denied(result(content, size=101), ob=ob) is ReasonCode.RESP_TOO_LARGE
+    assert response.validate(result(content, size=99, ob=ob), request(), CFG)
+    assert response.validate(result(content, size=100, ob=ob), request(), CFG)
+    assert denied(result(content, size=101, ob=ob)) is ReasonCode.RESP_TOO_LARGE
 
 
 def test_4b_the_config_ceiling_applies_even_when_the_obligation_is_generous() -> None:
@@ -228,7 +245,7 @@ def test_4b_the_config_ceiling_applies_even_when_the_obligation_is_generous() ->
     the layer that would actually hand a 40 MiB body to the client."""
     cfg = ResponseConfig(max_bytes=1_000)
     ob = Obligations(timeout_ms=3000, max_response_bytes=10_000_000)
-    assert denied(result(ok_content(), size=5_000), ob=ob, cfg=cfg) is (
+    assert denied(result(ok_content(), size=5_000, ob=ob), cfg=cfg) is (
         ReasonCode.RESP_TOO_LARGE
     )
 
@@ -240,7 +257,7 @@ def test_5_an_oversized_response_is_never_delivered_truncated() -> None:
     ob = Obligations(timeout_ms=3000, max_response_bytes=50)
     big = ok_content("x" * 10_000)
     with pytest.raises(ResponseDenial):
-        response.validate(result(big), request(), ob, CFG)
+        response.validate(result(big, ob=ob), request(), CFG)
 
 
 def test_5b_the_size_check_runs_before_the_structural_walk() -> None:
@@ -249,7 +266,7 @@ def test_5b_the_size_check_runs_before_the_structural_walk() -> None:
     response far over the ceiling must be refused for its SIZE, not for its shape."""
     ob = Obligations(timeout_ms=3000, max_response_bytes=10)
     pathological = {"content": [{"deep": "x" * 2_000_000}]}
-    assert denied(result(pathological), ob=ob) is ReasonCode.RESP_TOO_LARGE
+    assert denied(result(pathological, ob=ob)) is ReasonCode.RESP_TOO_LARGE
 
 
 # ===========================================================================
@@ -292,7 +309,7 @@ def test_6e_the_limits_are_the_response_configs_and_not_the_protocols() -> None:
     `read_file` result is far larger than any legitimate request, so sharing the walk
     must not mean sharing the numbers."""
     legitimate = {"content": [{"type": "text", "text": "x" * 60_000}]}
-    assert response.validate(result(legitimate), request(), OB, CFG)
+    assert response.validate(result(legitimate), request(), CFG)
 
 
 # ===========================================================================
@@ -310,7 +327,7 @@ def test_7_injected_instructions_are_delivered_as_data() -> None:
     without an explicit unwrap that shows up in review.
     """
     content = ok_content(INJECTED)
-    out = response.validate(result(content), request(), OB, CFG)
+    out = response.validate(result(content), request(), CFG)
 
     assert canonical_json(out.unwrap()["result"]) == canonical_json(content), (
         "not delivered intact"
@@ -330,7 +347,7 @@ def test_8_a_tool_error_is_delivered_as_an_error_not_reshaped() -> None:
     failed tool, not a gateway failure. Conflating the two would make a fixture-level
     failure look like a policy denial in the corpus results."""
     content = {"content": [{"type": "text", "text": "no such file"}], "isError": True}
-    out = response.validate(result(content, is_error=True), request(), OB, CFG)
+    out = response.validate(result(content, is_error=True), request(), CFG)
     assert out.unwrap()["result"]["isError"] is True
 
 
@@ -345,7 +362,7 @@ def test_8c_a_result_missing_its_methods_shape_is_refused() -> None:
 
 def test_8d_tools_list_needs_a_tools_list_and_tools_call_needs_content() -> None:
     listing = request("tools/list")
-    assert response.validate(result({"tools": []}), listing, OB, CFG)
+    assert response.validate(result({"tools": []}), listing, CFG)
     assert denied(result(ok_content()), listing) is ReasonCode.RESP_SHAPE_INVALID
 
 

@@ -16,19 +16,18 @@
 # POLICY ENGINE rather than by the content of a request, so no row of tool plus
 # arguments can reach them:
 #
-#   POLICY_UNAVAILABLE        OPA unreachable  - the sidecar is killed in
-#                             tests/integration/test_policy_opa.py::test_1_...
+#   POLICY_UNAVAILABLE        OPA unreachable  - exercised by the live
+#                             opa_killed deployment
 #   POLICY_TIMEOUT            evaluation past the deadline
 #   POLICY_RESULT_INVALID     a malformed decision document
 #   POLICY_DEFAULT_DENY       OPA answering 200 with no result at all
 #   POLICY_REVISION_UNKNOWN   a decision that cannot be attributed to a bundle
 #   POLICY_OBLIGATION_CLAMPED advisory, audited alongside a real code
 #
-# Producing any of them from a corpus row needs a broken or differently-configured
-# OPA per row, which unit 11's protected client cannot yet launch - the same
-# limitation the four startup-conditioned REG_* codes have. All six are covered in
-# tests/unit/test_policy.py against a stub transport that returns exactly the answer
-# a correct OPA never gives. Tracked in `_specs/90-deferred-register.md`.
+# Producing these needs a broken or differently configured OPA per row. Unit 11 now
+# launches an isolated killed-OPA deployment for POLICY_UNAVAILABLE; malformed
+# decision shapes remain lower-level policy tests because a correct OPA never emits
+# them. Tracked in `_specs/90-deferred-register.md`.
 corpus_version = "0.1.0"
 
 [[scenario]]

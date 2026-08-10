@@ -41,11 +41,14 @@ in-flight id. Verified against the installed SDK by running it, not inferred fro
 reading it (ADR-002's process lesson). What is left here is recording which of the
 four outcomes happened, which `_tech/07` §6 is right that nothing else preserves.
 
-**This behaviour is not yet pinned by a test, and it is load-bearing.** An SDK upgrade
-that stopped sending the courtesy cancel would leave the child working on abandoned
-requests with nothing failing. `mcp` is pinned exactly and `tests/unit/test_sdk_pin.py`
-is the tripwire for the pin itself; the behavioural assertion belongs beside it and is
-owed (`PLAN.md` §4.2, unit 07 row).
+**This behaviour is pinned**, because it is load-bearing and belongs to a dependency
+rather than to us: an SDK upgrade that stopped sending the courtesy cancel would leave
+the child working on abandoned requests with nothing here failing.
+`tests/unit/test_sdk_pin.py::test_cancelling_a_call_sends_the_sdk_request_id_upstream`
+drives a real cancellation through the installed SDK and asserts the id on the wire is
+the SDK's, not the client's. It sits with the pin's own tripwire rather than in this
+unit's tests on purpose — what it guards is the upgrade, so it must be read by whoever
+moves `VALIDATED_AGAINST`.
 """
 
 from __future__ import annotations
@@ -141,6 +144,21 @@ def _gate(req: CanonicalRequest, drv: DerivedAttributes, dec: Decision) -> None:
     stage 05 resolved, so a mutation between policy and forwarding breaks the
     comparison rather than travelling with the request.
     """
+    if not isinstance(dec, Decision):  # pyright: ignore[reportUnnecessaryIsInstance]
+        # ROUTE-001 names RUNTIME values, not only the static signature, and the two
+        # are not the same guarantee. pyright stops a caller from passing `True` or
+        # `None` in code it checks; it stops nothing arriving through an untyped seam,
+        # a stub in a test, or a future stage that forgets to construct the model.
+        #
+        # Without this the first attribute access raised `AttributeError`. That still
+        # failed closed — `pipeline.handle` denies on any unexpected exception — but it
+        # denied as INTERNAL_ERROR, so "nothing authorised this call" was recorded as
+        # "the gateway broke". Those are different findings and only one of them is
+        # this stage's answer.
+        raise RouteDenial(
+            ReasonCode.ROUTE_NO_DECISION,
+            detail=f"not a validated Decision: {type(dec).__name__}",
+        )
     if dec.request_id != req.request_id:
         raise RouteDenial(
             ReasonCode.ROUTE_NO_DECISION,
@@ -426,6 +444,7 @@ def _measure(content: Any, is_error: bool, elapsed_ns: int, ob: Obligations) -> 
     audit().set(response_bytes=size)
     _record("tool_error" if is_error else "ok", elapsed_ns)
     return RawResult(
+        obligations=ob,
         content=content,
         is_error=is_error,
         byte_count=size,

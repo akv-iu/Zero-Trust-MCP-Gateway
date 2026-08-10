@@ -120,6 +120,7 @@ def _spawn_and_list(mode: str) -> list[dict[str, Any]]:
 # ===========================================================================
 
 
+@pytest.mark.slow
 def test_an_unknown_tool_is_denied() -> None:
     with pytest.raises(RegistryDenial) as e:
         loaded().resolve(request(tool_name="exfiltrate"), CTX)
@@ -823,6 +824,7 @@ def test_the_bridge_receives_the_registry_values() -> None:
         max_size=6,
     )
 )
+@pytest.mark.slow
 def test_no_argument_value_can_reach_a_launch_parameter(poison: dict[str, str]) -> None:
     """Spec test 11, as a property of the data flow rather than of the child's argv.
 

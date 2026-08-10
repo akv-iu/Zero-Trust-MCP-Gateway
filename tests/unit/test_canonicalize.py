@@ -999,4 +999,40 @@ async def test_the_pipeline_actually_persists_the_stage_05_fields(
     sink.close()
 
 
+@pytest.mark.parametrize(
+    "client_path",
+    [
+        "public/documentation.txt",
+        "%70ublic/documentation.txt",
+        "public/./documentation.txt",
+        "workspace/notes.txt",
+    ],
+)
+def test_the_two_paths_this_unit_emits_describe_one_resource(
+    client_path: str, cfg: CanonicalizeConfig
+) -> None:
+    """`canonical_path` and `relative_path` MUST name the same file. Unit 07 assumes it.
+
+    Stage 06 authorizes against `canonical_path`; stage 07 forwards `relative_path` and
+    the child rejoins it onto its own base. Nothing at runtime ties the two together, so
+    if this unit ever derived them separately the gateway would authorize resource A and
+    cause a side effect on resource B — with an audit record naming A. That is the worst
+    failure either unit can have and it is completely silent.
+
+    Codex raised it against unit 07, where it cannot be tested: the router receives
+    `DerivedAttributes` and has no filesystem access to check them (ROUTE-003). Feeding
+    it a deliberately inconsistent pair proves nothing about production, and feeding it
+    a consistent one proves nothing either. The invariant belongs where the pair is
+    MADE, which is here.
+    """
+    drv = allowed(client_path, cfg)
+
+    assert drv.relative_path, f"{client_path}: no relative path derived"
+    rejoined = (Path(cfg.base) / drv.relative_path).resolve()
+    assert rejoined == Path(drv.canonical_path).resolve(), (
+        f"{client_path}: authorized {drv.canonical_path!r} but would forward "
+        f"{drv.relative_path!r}, which the upstream resolves to {rejoined!r}"
+    )
+
+
 pytestmark = pytest.mark.anyio

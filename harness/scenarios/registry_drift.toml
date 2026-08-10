@@ -17,9 +17,10 @@
 #   REG_SERVER_UNAVAILABLE  `state = "quarantined" | "disabled"` in the registry file
 #   REG_SCHEMA_UNVERIFIED   a call arriving before the handshake completed
 #
-# Reaching them from the corpus needs a differently-configured gateway per row, which
-# unit 11's protected client cannot yet launch. Until it can, all four are covered by
-# `tests/unit/test_registry.py` against the REAL fixture in `FIXTURE_MODE=drift` and
+# Reaching them from the corpus needs a differently-configured gateway per row. Unit
+# 11 now launches isolated variants for request-time cases; the startup-only states
+# remain covered by `tests/unit/test_registry.py` against the real fixture in
+# `FIXTURE_MODE=drift` and
 # `FIXTURE_MODE=poison` — the same upstream, the same comparison, driven from a test
 # instead of a corpus row. Tracked in `_specs/90-deferred-register.md` §10c.
 #

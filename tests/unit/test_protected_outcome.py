@@ -53,7 +53,7 @@ def ok_result() -> dict[str, Any]:
 def ok_error() -> dict[str, Any]:
     return {
         "jsonrpc": "2.0",
-        "id": None,
+        "id": SENT_ID,
         "error": {
             "code": -32020,
             "message": "denied",
@@ -77,6 +77,22 @@ def test_a_conforming_error_is_a_deny_carrying_its_reason_code() -> None:
     out = _outcome(reply(ok_error(), status=400), SENT_ID)
     assert out.decision == "deny"
     assert out.reason_code == "POLICY_PATH_NOT_PERMITTED"
+
+
+def test_a_conforming_timeout_error_under_504_is_a_deny() -> None:
+    body = ok_error()
+    body["error"]["data"]["reason_code"] = "ROUTE_TIMEOUT"
+    out = _outcome(reply(body, status=504), SENT_ID)
+    assert out.decision == "deny"
+    assert out.reason_code == "ROUTE_TIMEOUT"
+
+
+def test_a_denial_with_an_unrelated_id_is_not_a_gateway_decision() -> None:
+    body = ok_error()
+    body["id"] = 999
+    out = _outcome(reply(body, status=400), SENT_ID)
+    assert out.decision == "error"
+    assert out.reason_code == GATEWAY_RESPONSE_INVALID
 
 
 # ===========================================================================
@@ -123,8 +139,7 @@ def test_a_non_conforming_body_is_never_a_decision(name: str, body: Any) -> None
 
 
 def test_a_jsonrpc_error_under_a_2xx_is_invalid() -> None:
-    """`wire_shape` maps every ReasonCode to a 4xx. A 200 carrying an error means the
-    HTTP layer and the JSON-RPC layer disagree about what happened."""
+    """A 200 carrying an error disagrees with the gateway's wire contract."""
     out = _outcome(reply(ok_error(), status=200), SENT_ID)
     assert out.reason_code == GATEWAY_RESPONSE_INVALID
 

@@ -245,6 +245,20 @@ class RawResult(BaseModel):
     is_error: bool
     byte_count: int
     upstream_latency_ns: int
+    obligations: Obligations
+    """The obligations that ACTUALLY governed this call, after unit 07's clamp.
+
+    Carried on the result rather than passed to unit 08 separately, and that is the
+    whole point. It used to be separate, and `pipeline.handle` passed `dec.obligations`
+    — what policy ASKED for — while unit 07 had already clamped to something lower and
+    audited the clamped value. So a decision above `RouterConfig.max_response_bytes`
+    produced an oversized response that unit 08 accepted, under an audit record
+    claiming the lower ceiling had been enforced (Codex review).
+
+    Two checks of one quantity are only two layers if they compare the same number.
+    Attaching it here makes passing the wrong one unrepresentable instead of a rule
+    someone has to remember at one call site.
+    """
 
 
 @dataclass(frozen=True)
