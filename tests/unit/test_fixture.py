@@ -72,11 +72,23 @@ def test_damage_demo_symlink_escape(sandbox: Path) -> None:
         pytest.skip(
             "symlinks unavailable (Windows without Developer Mode) - REPORT AS SKIPPED"
         )
-    # traps/escape_link -> ../.. , i.e. outside the fixture root entirely.
-    outside = sandbox.parent.parent / "outside_marker.txt"
+    # `traps/escape_link -> ../..` is relative to `<sandbox>/traps/`, so it lands on
+    # `sandbox.parent` — one level above the fixture root, outside it entirely.
+    #
+    # The marker used to be written at `sandbox.parent.parent` and reached via
+    # `escape_link/<that dir's name>/...`, which walks DOWN from where the link lands
+    # and names a directory that does not exist. It raised `FileNotFoundError` the
+    # first time it ever ran — it skips on Windows, so no run had ever reached it.
+    outside = sandbox.parent / "outside_marker.txt"
     outside.write_text("OUTSIDE\n", encoding="utf-8")
-    rel = f"traps/escape_link/{outside.parent.name}/{outside.name}"
-    assert "OUTSIDE" in tools.call("read_file", {"path": rel})
+
+    escaped = tools.call("read_file", {"path": f"traps/escape_link/{outside.name}"})
+
+    assert "OUTSIDE" in escaped, (
+        "the naive fixture must follow the symlink out of its own root — if this "
+        "stops happening someone added a containment check to the fixture and every "
+        "gateway symlink test now passes without the gateway doing anything (FIX-007)"
+    )
 
 
 # ===========================================================================

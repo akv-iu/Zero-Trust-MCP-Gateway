@@ -262,3 +262,43 @@ assignment — about 14 lines of plumbing, with no required evidence field remov
 113/113 exact joins. OPA: 46/46. Full Python suite, Ruff, and configured Pyright scope
 pass. The 25,000-case release generation profile exceeded a two-hour local timeout;
 it produced no complete artifact and is deliberately not claimed.
+
+## First CI run — 2026-08-10
+
+The workflow's first two runs failed, both at `Test suite`, on both Python 3.12 and
+3.13. Everything before it passed — including the outbound-network blackout, which was
+the step that could not be verified from a development machine.
+
+**Three failures, all in tests that had never once executed.** Each is guarded by
+`links_available()` or a case-folding probe, so each had reported SKIPPED on every
+Windows run since it was written. The project's own rule says a skip is reported as a
+skip and never counted as a pass; what it did not say, and now does, is that such a
+test is *unverified code* rather than passing code.
+
+All three were wrong in the test, not the gateway — established by reading the
+requirement before touching anything:
+
+1. **`test_7_symlink_escape_via_an_intermediate_component`** expected
+   `CANON_SYMLINK_ESCAPE` from a link that leaves the tree and comes back in. CANON-007
+   verifies containment against the *final resolved real path*, which here is inside
+   `confidential/`; `CANON_SYMLINK_ESCAPE` is defined as resolving **outside** an
+   approved root. Denying would have meant denying a contained path. The test now
+   asserts what CANON-004 actually buys: the intermediate link cannot **launder** a
+   confidential file into `public`, so policy is asked about the root the file really
+   lives in and an intern is refused there.
+2. **`test_9_case_variants_...`** expected `CANON_RESOLUTION_FAILED` on a
+   case-sensitive filesystem. `PUBLIC` is not an approved root, and containment is
+   checked *before* existence — deliberately, so a reason code is the boundary crossed
+   rather than an accident of what the host has installed. `CANON_OUTSIDE_ROOT` is
+   correct; the old expectation contradicted the invariant that makes the corpus score
+   identically on WSL2 and Windows.
+3. **`test_damage_demo_symlink_escape`** built its path one directory too deep:
+   `traps/escape_link -> ../..` lands on `sandbox.parent`, and the test then walked
+   *down* into a directory that does not exist. `FileNotFoundError` on first execution.
+
+**Reproduction matters more than the fixes.** `/mnt/d` is DrvFs and reports symlinks
+unavailable, so running the suite there reproduces the Windows skips rather than the
+Linux failures. A native ext4 copy plus `scripts.fetch_opa` is what actually exercises
+them: **773 passed, 0 skipped** on Linux, against 766 passed / 7 skipped on Windows.
+The 44 OPA-dependent tests were skipping in the first WSL attempt for the same reason
+and would have been the next red build.

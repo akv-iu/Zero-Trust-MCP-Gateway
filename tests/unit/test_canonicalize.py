@@ -301,8 +301,21 @@ def test_7_symlink_escape_via_an_intermediate_component(
 ) -> None:
     """CANON-004: EVERY component is resolved, not only the last one.
 
-    `resolve` gives this for free — which is the reason `_tech/05` §10 forbids a
-    hand-rolled component walk, where it is exactly the case that gets missed.
+    This asserted `CANON_SYMLINK_ESCAPE` and was wrong — provably, the first time it
+    ever ran. It only ever ran here: it skips on Windows, so the expectation had never
+    been executed against the code.
+
+    Nothing escapes. The link leaves the tree and the rest of the path comes back in,
+    so the FINAL resolved target is `<base>/confidential/fake_salaries.csv` — inside an
+    approved root. CANON-007 verifies containment against the final resolved real path,
+    and `CANON_SYMLINK_ESCAPE` is defined as a symlink resolving *outside* an approved
+    root. Denying here would have meant denying a contained path.
+
+    What CANON-004 actually buys is the property below: the intermediate link cannot
+    **launder** a confidential file into `public`. Because every component is resolved,
+    the file is classified under the root it really lives in, so policy is asked about
+    `confidential` — and an intern is refused there. The request still fails; it fails
+    at the stage that owns the question, with the reason code that is true.
     """
     if not links_available(tree):
         pytest.skip("symlink creation refused by the platform (FIX-003)")
@@ -311,9 +324,16 @@ def test_7_symlink_escape_via_an_intermediate_component(
         (tree / "public" / "sub" / "out").symlink_to(tree.parent)
     except OSError:
         pytest.skip("symlink creation refused by the platform (FIX-003)")
-    assert (
-        denied("public/sub/out/fixture/confidential/fake_salaries.csv", cfg)
-        is ReasonCode.CANON_SYMLINK_ESCAPE
+
+    laundered = allowed("public/sub/out/fixture/confidential/fake_salaries.csv", cfg)
+    direct = allowed("confidential/fake_salaries.csv", cfg)
+
+    assert laundered.root == "confidential", (
+        "an intermediate symlink laundered a confidential file into "
+        f"{laundered.root!r} — policy would be asked the wrong question"
+    )
+    assert laundered.canonical_path == direct.canonical_path, (
+        "the resolved path must be the file's real location, whatever route named it"
     )
 
 
@@ -384,9 +404,16 @@ def test_9_case_variants_follow_the_filesystem_not_an_assumption(
             "case folding must not let a path evade the root it really lives in"
         )
     else:
-        assert (
-            denied("PUBLIC/DOCUMENTATION.TXT", cfg) is ReasonCode.CANON_RESOLUTION_FAILED
-        )
+        # `CANON_OUTSIDE_ROOT`, not `CANON_RESOLUTION_FAILED`, and the difference is
+        # the project's containment-before-existence rule rather than a nicety.
+        # `PUBLIC` is not an approved root — the approved ones are lower-case — so the
+        # boundary is crossed before anything asks whether the file exists. Expecting
+        # a resolution failure here made the reason code depend on what happens to be
+        # on disk, which is exactly what checking containment first exists to avoid.
+        #
+        # This branch had never executed: it is unreachable on a case-folding
+        # filesystem, so the expectation was only ever read, never run.
+        assert denied("PUBLIC/DOCUMENTATION.TXT", cfg) is ReasonCode.CANON_OUTSIDE_ROOT
 
 
 # ===========================================================================
