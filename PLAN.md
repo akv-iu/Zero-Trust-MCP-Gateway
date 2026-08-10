@@ -208,7 +208,7 @@ Only after all four: start v1.1.
 | 1 | Malicious denied, no prohibited state change | 115 PASS / 3 declared skips, **0 prohibited effects** | `run_corpus --mode protected --profile full` |
 | 2 | Legitimate rows produce their expected result | **21/21**; false positives reported as a number, not asserted zero | same run |
 | 3 | One audit event per decision, completeness measured | **113/113 (100.00%)** | [benchmark report](docs/benchmark-report.md) |
-| 4 | Passes with `GROQ_API_KEY` unset and no network | 751 passed, 7 skipped; key unset | `pytest tests/` |
+| 4 | Passes with `GROQ_API_KEY` unset and no external network | Suite passes after CI blocks IPv4 and IPv6 egress; key unset | `pytest tests/` + CI egress probe |
 
 Condition 1 is meaningful only because the negative control is: a real allow-all Rego bundle produces 13 detected CRITICAL outcomes, and `direct` produces 23 prohibited effects. A zero from a harness that has never been seen to report non-zero is not evidence.
 

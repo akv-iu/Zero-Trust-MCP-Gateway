@@ -129,11 +129,11 @@ pyright gateway harness scripts
 
 The corpus and the generator both default to a subset, because the full runs are the
 two slowest things here and most of a development session re-proves rows that did not
-change. Measured on the development machine:
+change:
 
 | Command | Default | Full |
 |---|---|---|
-| `pytest` | `-m "not slow"`, 686 tests, **43 s** | 751 tests + 7 skips, **2 m 29 s** |
+| `pytest` | `-m "not slow"`, unit-focused lane | all tests; platform skips reported |
 | `run_corpus` | `--profile smoke`, 50 rows, **~45 s** protected | `--profile full`, 118 rows, **~53 s** |
 | `run_generated` | `--profile dev`, 250 cases, **~26 s** | `--profile release`, 25,000 cases, **hours** |
 
@@ -155,8 +155,8 @@ the current published result uses the 2,500-case `ci` profile, not the 250-case 
 lane or the incomplete 25,000-case `release` attempt.
 
 Development targets WSL2, which gives the strong fixture-isolation tier and working
-symlinks. On Windows three symlink tests skip (reported SKIPPED, never passed) and
-the fixture runs on the *weak* tier, which stamps `isolation: weak` on every
+symlinks. On Windows, symlink-dependent tests skip (reported SKIPPED, never passed)
+and the fixture runs on the *weak* tier, which stamps `isolation: weak` on every
 benchmark report.
 
 ## OPA

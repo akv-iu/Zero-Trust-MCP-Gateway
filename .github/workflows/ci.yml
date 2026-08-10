@@ -99,9 +99,9 @@ jobs:
           sudo iptables -A OUTPUT -o lo -j ACCEPT
           sudo iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
           sudo iptables -A OUTPUT -j REJECT --reject-with icmp-port-unreachable
-          sudo ip6tables -A OUTPUT -o lo -j ACCEPT || true
-          sudo ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT || true
-          sudo ip6tables -A OUTPUT -j REJECT || true
+          sudo ip6tables -A OUTPUT -o lo -j ACCEPT
+          sudo ip6tables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+          sudo ip6tables -A OUTPUT -j REJECT
 
       - name: Prove the block is real
         run: |
@@ -115,7 +115,11 @@ jobs:
           listener.close()
           print("loopback reachable — the system under test can still run")
 
-          for host, port in (("1.1.1.1", 443), ("8.8.8.8", 53)):
+          for host, port in (
+              ("1.1.1.1", 443),
+              ("8.8.8.8", 53),
+              ("2606:4700:4700::1111", 443),
+          ):
               try:
                   socket.create_connection((host, port), timeout=5).close()
               except OSError as exc:

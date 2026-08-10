@@ -19,13 +19,13 @@ python -m pip install pytest pytest-anyio hypothesis ruff pyright
 python -m scripts.fetch_opa         # pinned OPA 1.19.0, checksum-verified into .tools/
 ```
 
-`GROQ_API_KEY` must be unset and no network is required past that install. That is
-CONV-016 and it is enforced in CI by a step that fails if `pydantic_ai` is importable
-— a claim about a missing dependency needs a check, not a comment.
+Once those setup commands finish, `GROQ_API_KEY` must be unset and no external network
+is required. CI checks that `pydantic_ai` is absent, blocks IPv4 and IPv6 egress while
+leaving loopback available, and proves the block before running the evidence gates.
 
 Development targets **WSL2**, which gives the strong fixture-isolation tier and working
-symlinks. On Windows three symlink tests skip — reported as skips, never as passes —
-and the fixture runs on the *weak* tier, which stamps `isolation: weak` on the report.
+symlinks. On Windows, symlink-dependent tests skip — reported as skips, never as
+passes — and the fixture runs on the *weak* tier, which stamps `isolation: weak` on the report.
 The published report was produced on Windows and says so.
 
 ---
@@ -201,8 +201,8 @@ of which is hidden.
 ## 8. The gates
 
 ```bash
-python -m pytest tests/ -q                    # 751 passed, 7 skipped — 2 m 29 s
-python -m pytest tests/ -q -m "not slow"      # fast lane, 686 tests — 43 s
+python -m pytest tests/ -q                    # full suite; platform skips are reported
+python -m pytest tests/ -q -m "not slow"      # unit-focused development lane
 python -m ruff check . && python -m ruff format --check .
 python -m pyright gateway harness scripts
 python -m scripts.check_claims                # the phrase PLAN.md §6.2 replaced
