@@ -2,66 +2,79 @@
 
 A default-deny enforcement point between an MCP client and an MCP server. Every
 `tools/call` is authorized against deterministic policy before the upstream side
-effect can occur. Built against the **MCP 2026-07-28 stateless specification**.
+effect can occur.
 
-The deliverable is **evidence**, not features: a published attack corpus, a
+## The result
+
+Corpus version 0.1.0 — **118 hand-written scenarios**, 97 malicious and 21 legitimate,
+run three ways over a real HTTP socket into a real gateway, against a real policy
+engine and a real child server.
+
+Every verdict is decided by a side-effect oracle that reads the protected server's own
+operation log and hashes its directory tree. **Never by the gateway's claim that it
+blocked something.**
+
+| Run | Prohibited side effects observed | Legitimate rows passing |
+|---|---:|---:|
+| No gateway in the path | 23 | 21/21 |
+| Gateway with a deliberately broken policy — negative control | 13 detected | n/a |
+| **Gateway — the system under test** | **0** | **21/21** |
+
+**Read the middle row before the last one.** A zero from a harness that has never been
+seen to report anything else is not evidence; the negative control is what makes it
+one. The top row is what proves the corpus can cause real damage in the first place.
+
+115 PASS, 3 declared skips — two need symlinks, unavailable on Windows; one is
+normalized by a conforming HTTP transport into a legitimate request and is scored in
+`tests/integration/test_protocol_over_http.py` instead. Every scored row is joined to
+its own audit event, and a decision that cannot be correlated to a record is reported
+`INDETERMINATE`, never as a pass. Audit completeness: **113/113**.
+
+These figures are from `--profile full` — all 118 rows. The 50-row development lane is
+never the source of a published number; see
+[Fast lanes](#fast-lanes-and-when-not-to-use-them).
+
+Alongside them, **2,500 generated cases** from recorded seed `11011` across five
+families, counted separately and never blended into the hand-written 118.
+
+Every number here, the command that produced it, and the two that are deliberately
+*not* claimed: [docs/reproducing-the-evidence.md](docs/reproducing-the-evidence.md).
+The assembled report is [docs/benchmark-report.md](docs/benchmark-report.md).
+
+## What this is
+
+Built against the **MCP 2026-07-28 stateless specification**. The client edge is
+Streamable HTTP on loopback; only the upstream leg to the child server is stdio
+([ADR-001](_specs/ADR-001-transport-and-mirrored-metadata.md)).
+
+The deliverable is **evidence, not features**: a published attack corpus, a
 side-effect oracle that observes the protected filesystem rather than trusting the
 gateway's own output, a measured overhead distribution, and an audit trail with a
 measured completeness ratio.
 
 Scope, milestones and the verification method are in [PLAN.md](PLAN.md). What each
 unit must do is in [`_specs/`](_specs/); how to build it is in [`_tech/`](_tech/).
-Every number below, with the command that produced it and the two that are *not*
-claimed: [docs/reproducing-the-evidence.md](docs/reproducing-the-evidence.md).
 
 ## Status
 
-Units built: foundation, 10 (fixture), 09 (audit), 01 (HTTP edge + stdio upstream
-bridge), 02 (protocol guard), 03 (identity), 04 (registry), 05 (filesystem
-canonicalizer), 06 (OPA policy broker + Rego bundle), 07 (upstream router), 08
-(response guard), and 11 (evaluation harness). **The pipeline completes end to end** —
-a request goes in one end and a tool result comes out the other, against a real policy
-engine and a real child server. Build order and state: [PLAN.md §4.2](PLAN.md).
+Every unit in the v1 build order is built, and each has been through the review gate:
+fixture, audit, HTTP edge + stdio bridge, protocol guard, identity, registry,
+filesystem canonicalizer, OPA policy broker + Rego bundle, upstream router, response
+guard, and the evaluation harness. **The pipeline completes end to end** — a request
+goes in one end and a tool result comes out the other. Build order and state:
+[PLAN.md §4.2](PLAN.md).
 
-**The corpus now scores in `protected` mode.** Every row goes over a real HTTP socket
-into a real gateway, against a real policy engine and a real child server, and each
-verdict is decided by the side-effect oracle reading the fixture's own operation log —
-not by the gateway's answer. Corpus version 0.1.0 now contains **118 hand-written
-scenarios** (97 malicious, 21 legitimate), including real fixture-mode deployments,
-all structural limits at/below/above their boundaries, and both sides of the complete
-three-principal policy matrix.
+Unit 11 includes seeded Hypothesis generation (five required families), the alternating
+paired benchmark (N ≥ 1,000 plus a separately labelled modest-concurrency run), and the
+strict Markdown report generator. Those tools publish observed numbers with no latency
+threshold, and refuse stale, mixed, incomplete, or provenance-mismatched evidence. A
+25,000-case release-profile attempt reached the two-hour local timeout without
+completing, so no release-profile result is claimed.
 
-| Mode | Prohibited side effects observed | Legitimate rows passing |
-|---|---|---|
-| `direct` — no gateway | 23 | 21/21 |
-| broken real policy — negative control | 13 detected | n/a |
-| `protected` — the system under test | **0** | **21/21** |
+### Measured overhead
 
-115 PASS, 3 SKIPPED (two need symlinks, unavailable on Windows; one is normalized by a
-conforming HTTP transport into a legitimate request and is scored in
-`tests/integration/test_protocol_over_http.py` instead). `direct` skips 52 rows because
-a scenario carrying wire damage has no wire to damage without a gateway in the path.
-
-Every scored row is joined to its own audit event; a decision that cannot be correlated
-to a record is reported `INDETERMINATE` and never as a pass. Read the middle row before
-the last one: the negative control exists so that a `0` in the bottom row is evidence
-the harness can see failure, rather than evidence it is blind.
-
-Those figures are from `--profile full` — all 118 rows. There is a 50-row smoke lane for
-development and it is never the source of a published number; see
-[Fast lanes](#fast-lanes-and-when-not-to-use-them).
-
-Unit 11 now includes seeded Hypothesis generation (five required families), the
-alternating paired benchmark (N ≥ 1,000 plus a separately labelled modest-concurrency
-run), and the strict Markdown report generator. Those tools publish observed numbers
-without a latency threshold and refuse stale, mixed, incomplete, or provenance-mismatched
-evidence. The current [benchmark report](docs/benchmark-report.md) records 2,500/2,500
-CI-profile generated cases passing from seed `11011`. A 25,000-case release-profile
-attempt reached the two-hour local timeout without completing, so no release-profile
-result is claimed.
-
-Current co-located added overhead, from 900 retained pairs after the documented 10%
-warmup of each N=1,000 run:
+Co-located added overhead, from 900 retained pairs after the documented 10% warmup of
+each N = 1,000 run:
 
 | Run | p50 | p95 | p99 | min | max |
 |---|---:|---:|---:|---:|---:|
@@ -69,9 +82,6 @@ warmup of each N=1,000 run:
 | Concurrency 4 | 19.092 ms | 25.486 ms | 28.331 ms | 8.464 ms | 49.418 ms |
 
 These are development measurements, not throughput or capacity claims.
-
-The client edge is **Streamable HTTP on loopback**; only the upstream leg to the
-child server is stdio ([ADR-001](_specs/ADR-001-transport-and-mirrored-metadata.md)).
 
 ## What this does not protect against
 
