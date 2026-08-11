@@ -32,25 +32,25 @@ Client, gateway, policy engine, fixture, and load generator ran on the same mach
 
 | Distribution (ms) | n | p50 | p95 | p99 | min | max |
 |---|---:|---:|---:|---:|---:|---:|
-| direct_ms | 900 | 6.881 | 9.672 | 15.329 | 3.684 | 32.416 |
-| protected_ms | 900 | 61.300 | 92.301 | 125.051 | 36.026 | 146.694 |
-| added_overhead_ms | 900 | 54.347 | 84.462 | 118.346 | 26.077 | 137.964 |
-| stage: protocol+canonicalization | 900 | 0.728 | 1.379 | 2.174 | 0.498 | 10.111 |
-| stage: policy | 900 | 1.865 | 3.432 | 4.398 | 1.296 | 12.936 |
-| stage: upstream | 900 | 5.981 | 8.216 | 11.351 | 4.026 | 22.498 |
-| stage: audit | 900 | 2.856 | 4.686 | 5.913 | 1.665 | 28.604 |
+| direct_ms | 900 | 5.681 | 8.012 | 10.988 | 3.623 | 48.924 |
+| protected_ms | 900 | 51.671 | 66.860 | 107.819 | 26.004 | 158.224 |
+| added_overhead_ms | 900 | 45.646 | 62.097 | 102.071 | -11.232 | 147.254 |
+| stage: protocol+canonicalization | 900 | 0.683 | 1.123 | 1.347 | 0.516 | 2.341 |
+| stage: policy | 900 | 1.717 | 2.948 | 15.313 | 1.346 | 53.209 |
+| stage: upstream | 900 | 4.976 | 6.953 | 10.162 | 3.844 | 22.028 |
+| stage: audit | 900 | 2.411 | 3.110 | 4.275 | 1.662 | 13.756 |
 
 ### modest-concurrency (concurrency 4)
 
 | Distribution (ms) | n | p50 | p95 | p99 | min | max |
 |---|---:|---:|---:|---:|---:|---:|
-| direct_ms | 900 | 7.082 | 10.089 | 12.359 | 4.438 | 18.921 |
-| protected_ms | 900 | 26.379 | 32.098 | 35.604 | 18.773 | 56.003 |
-| added_overhead_ms | 900 | 19.092 | 25.486 | 28.331 | 8.464 | 49.418 |
-| stage: protocol+canonicalization | 900 | 0.794 | 1.557 | 2.158 | 0.467 | 6.275 |
-| stage: policy | 900 | 2.977 | 4.912 | 5.956 | 1.438 | 8.664 |
-| stage: upstream | 900 | 9.150 | 14.204 | 16.797 | 4.952 | 21.758 |
-| stage: audit | 900 | 6.665 | 9.843 | 11.672 | 3.152 | 21.541 |
+| direct_ms | 900 | 5.804 | 7.641 | 9.255 | 4.044 | 12.554 |
+| protected_ms | 900 | 21.637 | 24.765 | 26.945 | 15.662 | 29.906 |
+| added_overhead_ms | 900 | 15.798 | 19.104 | 20.826 | 7.670 | 22.642 |
+| stage: protocol+canonicalization | 900 | 0.629 | 1.166 | 1.378 | 0.489 | 1.694 |
+| stage: policy | 900 | 2.422 | 3.560 | 4.293 | 1.183 | 6.694 |
+| stage: upstream | 900 | 8.010 | 11.201 | 13.101 | 4.338 | 14.888 |
+| stage: audit | 900 | 5.479 | 7.493 | 8.283 | 2.294 | 11.400 |
 
 ## Audit completeness
 
@@ -60,8 +60,8 @@ Request events written / auditable requests issued: **113/113 (100.00%)**.
 
 | Field | Value |
 |---|---|
-| commit sha | 31809ce1a9502fc29ec5fcccd72e1f1f890330aa (working tree dirty) |
-| source fingerprint | cf174a7b389e4f05ac604093c38298a93c7ac28479903a04dc563f56e37f9ae7 |
+| commit sha | 8ed364a4c34b1aba786c45978aca6c0e6f6590ce |
+| source fingerprint | 55b361132884c9dedba6c96c561d990cca952e271246aa7890f88bc2c673a26b |
 | policy revision | fdbb33454603aa73 |
 | corpus version | 0.1.0 |
 | audit schema version | 3 |
@@ -72,7 +72,7 @@ Request events written / auditable requests issued: **113/113 (100.00%)**.
 | python version | 3.13.7 (tags/v3.13.7:bcee1c3, Aug 14 2025, 14:15:11) [MSC v.1944 64 bit (AMD64)] |
 | opa version | 1.19.0 |
 | fixture isolation | weak |
-| timestamp | 2026-08-10T23:00:31.683285+00:00 |
+| timestamp | 2026-08-11T02:42:01.390553+00:00 |
 | case sensitive filesystem | False |
 | durable audit writes | True |
 

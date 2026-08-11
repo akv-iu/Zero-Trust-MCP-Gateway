@@ -78,10 +78,16 @@ each N = 1,000 run:
 
 | Run | p50 | p95 | p99 | min | max |
 |---|---:|---:|---:|---:|---:|
-| Single concurrency | 54.347 ms | 84.462 ms | 118.346 ms | 26.077 ms | 137.964 ms |
-| Concurrency 4 | 19.092 ms | 25.486 ms | 28.331 ms | 8.464 ms | 49.418 ms |
+| Single concurrency | 45.646 ms | 62.097 ms | 102.071 ms | −11.232 ms | 147.254 ms |
+| Concurrency 4 | 15.798 ms | 19.104 ms | 20.826 ms | 7.670 ms | 22.642 ms |
 
 These are development measurements, not throughput or capacity claims.
+
+The negative minimum is real and is left in: in one pair the protected call finished
+faster than the direct call it was measured against. That is scheduling noise on a
+co-located machine, and clamping it would be tidying the measurement rather than
+reporting it. Per-stage figures, including a policy-evaluation p99 spike well above its
+p95, are in the [report](docs/benchmark-report.md).
 
 ## What this does not protect against
 
