@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" width="1200" height="675" role="img" aria-label="Without a gateway, an MCP tools/call reaches the filesystem tool unchecked. With the Zero-Trust MCP Gateway in path, every call passes eight fixed stages, policy is evaluated by OPA, only stage 07 can cause a side effect, and every verdict is confirmed by reading the protected server's own operation log and a tree hash.">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8FA3BE"/>
+    </marker>
+    <marker id="ahr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#F87171"/>
+    </marker>
+    <marker id="ahg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#34D399"/>
+    </marker>
+    <marker id="ahc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#22D3EE"/>
+    </marker>
+  </defs>
+
+  <style>
+    text { font-family: "Segoe UI", Inter, system-ui, sans-serif; }
+    .t  { fill: #E6EDF7; }
+    .m  { fill: #8FA3BE; }
+    .lbl{ fill: #8FA3BE; font-size: 11px; }
+    .cap{ font-size: 11px; letter-spacing: 2px; font-weight: 600; }
+    .chip{ fill: #131C2B; stroke: #2B3A50; }
+    .mono{ font-family: Consolas, "Cascadia Mono", monospace; }
+  </style>
+
+  <rect width="1200" height="675" fill="#0B1220"/>
+
+  <!-- header -->
+  <text class="t" x="48" y="56" font-size="32" font-weight="700">Zero-Trust MCP Gateway</text>
+  <text class="m" x="48" y="84" font-size="15">A default-deny enforcement point between an MCP client and an MCP server.</text>
+  <rect x="900" y="32" width="252" height="32" rx="16" fill="#08252B" stroke="#164E5B"/>
+  <text x="1026" y="53" font-size="12.5" fill="#22D3EE" text-anchor="middle">MCP 2026-07-28 · stateless · fail closed</text>
+  <line x1="48" y1="108" x2="1152" y2="108" stroke="#1E2A3D"/>
+
+  <!-- ── panel A : the problem ───────────────────────────────── -->
+  <rect x="48" y="126" width="1104" height="118" rx="12" fill="#120F14" stroke="#3A1F26"/>
+  <text class="cap" x="68" y="150" fill="#F87171">WITHOUT A GATEWAY</text>
+
+  <rect class="chip" x="68"  y="174" width="124" height="44" rx="8"/>
+  <text class="t" x="130" y="201" font-size="13" text-anchor="middle">AI app</text>
+  <line x1="196" y1="196" x2="222" y2="196" stroke="#8FA3BE" marker-end="url(#ah)"/>
+
+  <rect class="chip" x="228" y="174" width="140" height="44" rx="8"/>
+  <text class="t" x="298" y="201" font-size="13" text-anchor="middle">MCP client</text>
+  <line x1="372" y1="196" x2="398" y2="196" stroke="#F87171" marker-end="url(#ahr)"/>
+  <text class="lbl" x="385" y="166" fill="#F87171" text-anchor="middle">tools/call</text>
+
+  <rect class="chip" x="404" y="174" width="140" height="44" rx="8"/>
+  <text class="t" x="474" y="201" font-size="13" text-anchor="middle">MCP server</text>
+  <line x1="548" y1="196" x2="574" y2="196" stroke="#F87171" marker-end="url(#ahr)"/>
+  <text class="lbl" x="561" y="166" fill="#F87171" text-anchor="middle">acts</text>
+
+  <rect class="chip" x="580" y="174" width="168" height="44" rx="8"/>
+  <text class="t" x="664" y="195" font-size="12.5" text-anchor="middle">workspace/ · payroll/</text>
+  <text class="m" x="664" y="210" font-size="10.5" text-anchor="middle">the protected filesystem</text>
+
+  <text class="mono" x="784" y="180" font-size="12.5" fill="#F87171">read_file("../../payroll/salaries.csv")</text>
+  <text class="m" x="784" y="202" font-size="12.5">is served. Nothing in the path decides whether it should be.</text>
+  <text x="784" y="224" font-size="12.5" fill="#F87171">23 prohibited side effects across the 118-scenario corpus.</text>
+
+  <!-- ── panel B : the mechanism ─────────────────────────────── -->
+  <rect x="48" y="258" width="1104" height="300" rx="12" fill="#0A1622" stroke="#164E5B"/>
+  <text class="cap" x="68" y="284" fill="#22D3EE">WITH THE GATEWAY — EVERY tools/call AUTHORIZED BEFORE THE SIDE EFFECT</text>
+
+  <rect class="chip" x="68" y="372" width="124" height="48" rx="8"/>
+  <text class="t" x="130" y="401" font-size="13" text-anchor="middle">MCP client</text>
+  <line x1="196" y1="396" x2="230" y2="396" stroke="#22D3EE" marker-end="url(#ahc)"/>
+  <text class="lbl" x="213" y="384" text-anchor="middle">HTTP</text>
+
+  <!-- deny path -->
+  <rect x="56" y="438" width="152" height="38" rx="8" fill="#1A1015" stroke="#5A2530"/>
+  <text x="132" y="462" font-size="11.5" fill="#F87171" text-anchor="middle">denied · never forwarded</text>
+  <line x1="234" y1="457" x2="212" y2="457" stroke="#F87171" stroke-dasharray="4 3" marker-end="url(#ahr)"/>
+
+  <!-- gateway -->
+  <rect x="236" y="312" width="560" height="192" rx="10" fill="#0B1220" stroke="#22D3EE"/>
+  <text class="m" x="249" y="334" font-size="11.5">Gateway — one process, one fixed stage order</text>
+
+  <rect x="249" y="344" width="125" height="38" rx="7" fill="#12202E" stroke="#2B4A5E"/>
+  <text class="t" x="311" y="368" font-size="12" text-anchor="middle">01 edge</text>
+  <rect x="385" y="344" width="125" height="38" rx="7" fill="#12202E" stroke="#2B4A5E"/>
+  <text class="t" x="447" y="368" font-size="12" text-anchor="middle">02 protocol</text>
+  <rect x="521" y="344" width="125" height="38" rx="7" fill="#12202E" stroke="#2B4A5E"/>
+  <text class="t" x="583" y="368" font-size="12" text-anchor="middle">03 identity</text>
+  <rect x="657" y="344" width="125" height="38" rx="7" fill="#12202E" stroke="#2B4A5E"/>
+  <text class="t" x="719" y="368" font-size="12" text-anchor="middle">04 registry</text>
+
+  <rect x="249" y="392" width="125" height="38" rx="7" fill="#12202E" stroke="#2B4A5E"/>
+  <text class="t" x="311" y="416" font-size="12" text-anchor="middle">05 canonicalize</text>
+  <rect x="385" y="392" width="125" height="38" rx="7" fill="#241C08" stroke="#FBBF24"/>
+  <text x="447" y="416" font-size="12" fill="#FBBF24" text-anchor="middle">06 policy</text>
+  <rect x="521" y="392" width="125" height="38" rx="7" fill="#0A2018" stroke="#34D399"/>
+  <text x="583" y="416" font-size="12" fill="#34D399" text-anchor="middle">07 router</text>
+  <rect x="657" y="392" width="125" height="38" rx="7" fill="#12202E" stroke="#2B4A5E"/>
+  <text class="t" x="719" y="416" font-size="12" text-anchor="middle">08 response</text>
+
+  <text class="m" x="249" y="447" font-size="10.5">07 is the only stage that can cause a side effect, and only with a Decision bound to this</text>
+  <text class="m" x="249" y="463" font-size="10.5">request id + method + tool + argument hash — it forwards the resolved path, not the client's.</text>
+  <text class="m" x="249" y="479" font-size="10.5">04 pins tool descriptions and schemas to what a human approved; a poisoned advertisement</text>
+  <text class="m" x="249" y="495" font-size="10.5">quarantines the tool. Unexpected error, OPA unreachable, audit sink unwritable → deny.</text>
+
+  <!-- supporting processes -->
+  <line x1="447" y1="504" x2="447" y2="512" stroke="#FBBF24" stroke-dasharray="4 3"/>
+  <rect x="249" y="512" width="262" height="40" rx="8" fill="#12202E" stroke="#3A4A60"/>
+  <text class="t" x="262" y="529" font-size="12">OPA sidecar · Rego bundle</text>
+  <text class="m" x="262" y="544" font-size="10.5">deterministic decision, evaluated out of process</text>
+
+  <line x1="640" y1="504" x2="640" y2="512" stroke="#8FA3BE" stroke-dasharray="4 3"/>
+  <rect x="525" y="512" width="271" height="40" rx="8" fill="#12202E" stroke="#3A4A60"/>
+  <text class="t" x="538" y="529" font-size="12">Audit sink · every stage exit</text>
+  <text class="m" x="538" y="544" font-size="10.5">113/113 decisions joined to their own record</text>
+
+  <!-- upstream -->
+  <line x1="804" y1="396" x2="880" y2="396" stroke="#34D399" marker-end="url(#ahg)"/>
+  <text class="lbl" x="842" y="384" fill="#34D399" text-anchor="middle">approved call</text>
+
+  <rect class="chip" x="890" y="352" width="150" height="52" rx="8"/>
+  <text class="t" x="965" y="374" font-size="13" text-anchor="middle">MCP server</text>
+  <text class="m" x="965" y="391" font-size="10.5" text-anchor="middle">filesystem tools (stdio)</text>
+
+  <line x1="965" y1="408" x2="965" y2="436" stroke="#8FA3BE" marker-end="url(#ah)"/>
+  <text class="lbl" x="976" y="427">read / write</text>
+
+  <rect class="chip" x="890" y="440" width="150" height="48" rx="8"/>
+  <text class="t" x="965" y="461" font-size="12.5" text-anchor="middle">workspace/ · payroll/</text>
+  <text class="m" x="965" y="477" font-size="10.5" text-anchor="middle">the protected filesystem</text>
+
+  <!-- oracle, drawn across the panel edge on purpose -->
+  <line x1="965" y1="572" x2="965" y2="494" stroke="#34D399" stroke-dasharray="5 4" marker-end="url(#ahg)"/>
+  <text class="lbl" x="976" y="540" fill="#34D399">observes</text>
+
+  <!-- ── footer : how a verdict is decided ───────────────────── -->
+  <rect x="48" y="572" width="1104" height="46" rx="10" fill="#0E1626" stroke="#243449"/>
+  <text class="t" x="68" y="600" font-size="12.5">Side-effect oracle — every verdict is read from the protected server's own operation log and a hash of its directory tree, never from the gateway's claim that it blocked something.</text>
+
+  <text x="48" y="655" font-size="21" font-weight="700" fill="#34D399">0</text>
+  <text class="m" x="66" y="655" font-size="12.5">prohibited side effects, gateway in path</text>
+
+  <text x="330" y="655" font-size="21" font-weight="700" fill="#FBBF24">13</text>
+  <text class="m" x="358" y="655" font-size="12.5">detected with the policy deliberately broken — the negative control</text>
+
+  <text x="760" y="655" font-size="21" font-weight="700" fill="#22D3EE">21/21</text>
+  <text class="m" x="822" y="655" font-size="12.5">legitimate calls still pass</text>
+
+  <text class="m" x="1152" y="655" font-size="11" text-anchor="end" opacity="0.75">corpus v0.1.0 · --profile full</text>
+</svg>

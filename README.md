@@ -43,6 +43,9 @@ The assembled report is [docs/benchmark-report.md](docs/benchmark-report.md).
 
 ## What this is
 
+For a short, non-technical explanation of the project, its purpose and its current
+limits, read the [plain-language FAQ](docs/plain-language-faq.md).
+
 Built against the **MCP 2026-07-28 stateless specification**. The client edge is
 Streamable HTTP on loopback; only the upstream leg to the child server is stdio
 ([ADR-001](_specs/ADR-001-transport-and-mirrored-metadata.md)).
